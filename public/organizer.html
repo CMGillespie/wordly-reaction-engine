@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Organizer Real-Time View</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f4f4f9; color: #333; padding: 2em; display: flex; gap: 2em; }
+        .main-content { flex-grow: 3; }
+        .sidebar { flex-grow: 1; min-width: 300px; background-color: #fff; padding: 1.5em; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        h1, h2 { color: #4a4a4a; }
+        #utterances div, .leaderboard-item { background-color: #fff; border: 1px solid #ddd; padding: 15px; margin-bottom: 12px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        p { margin: 0 0 10px 0; }
+        span { margin-right: 15px; font-weight: bold; }
+        .leaderboard-item { display: flex; justify-content: space-between; align-items: center; }
+        .leaderboard-item button { font-size: 0.8em; padding: 4px 8px; cursor: pointer; }
+        #session-id-display { font-size: 1.2em; color: #555; margin-bottom: 1em; }
+        .error-message { color: #e74c3c; font-weight: bold; }
+        #reset-session-btn { background-color: #e74c3c; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-size: 0.9em; margin-top: 1em; width: 100%; }
+        #reset-session-btn:hover { background-color: #c0392b; }
+
+        /* Session Entry Gate Styles */
+        #session-gate {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #1a1a2e;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-family: sans-serif;
+        }
+        #session-input {
+            padding: 12px;
+            border-radius: 4px;
+            border: none;
+            width: 250px;
+            font-size: 18px;
+            margin-bottom: 15px;
+            text-align: center;
+            text-transform: uppercase;
+        }
+        #enter-console-btn {
+            padding: 12px 30px;
+            background: #2ecc71;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div id="session-gate">
+<div style="width: 150px; margin-bottom: 30px; color: #ffffff;">
+  <svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 108 33" fill="none" title="Wordly Logo">
+    <g clip-path="url(#clip0_2061_12667)">
+      <path d="M35.1107 5.03864L36.3379 0.364479H34.1934C30.8595 0.364479 27.9403 2.61779 27.0942 5.8428L24.4305 16.0288L20.5353 0.360291H15.7104L11.8362 15.966L9.18498 5.8428C8.34313 2.61779 5.42387 0.364479 2.08997 0.364479H0L1.22718 5.03864H2.08997C3.3004 5.03864 4.36004 5.85537 4.66579 7.0281L8.77872 22.8306H14.2068L18.127 7.75267L22.0473 22.8306H27.4754L31.6176 7.0281C31.9234 5.85955 32.983 5.03864 34.1934 5.03864H35.1107Z" fill="currentColor"></path>
+      <path d="M52.5254 13.7125V22.8263H57.1996V13.7125C57.1996 12.0581 58.5482 10.7095 60.2026 10.7095H62.3219L63.5449 6.03534H60.2026C55.9682 6.03534 52.5254 9.47814 52.5254 13.7125Z" fill="currentColor"></path>
+      <path d="M46.1003 7.11507C44.7726 6.36955 43.2942 6.00098 41.6691 6.00098C40.044 6.00098 38.5572 6.37374 37.2211 7.11507C35.885 7.86059 34.817 8.87416 34.0254 10.16C33.2296 11.4458 32.8359 12.9243 32.8359 14.5912C32.8359 16.2582 33.2338 17.7115 34.0254 19.0099C34.8212 20.3083 35.885 21.326 37.2211 22.0716C38.5572 22.8171 40.0398 23.1857 41.6691 23.1857C43.2984 23.1857 44.7768 22.8129 46.1003 22.0716C47.428 21.326 48.4877 20.3083 49.2835 19.0099C50.0793 17.7115 50.473 16.2414 50.473 14.5912C50.473 12.941 50.0751 11.4458 49.2835 10.16C48.4877 8.87416 47.428 7.8564 46.1003 7.11507ZM45.2711 16.9451C44.9192 17.6278 44.4376 18.1597 43.8219 18.545C43.2104 18.9261 42.49 19.1188 41.6649 19.1188C40.8398 19.1188 40.1152 18.9261 39.4954 18.545C38.8713 18.1639 38.3855 17.6319 38.0336 16.9451C37.6818 16.2624 37.5059 15.4791 37.5059 14.5912C37.5059 13.7033 37.6818 12.9285 38.0336 12.2541C38.3855 11.5798 38.8713 11.0479 39.4954 10.6542C40.1194 10.2605 40.8398 10.0678 41.6649 10.0678C42.49 10.0678 43.2062 10.2647 43.8219 10.6542C44.4334 11.0479 44.9192 11.5798 45.2711 12.2541C45.6229 12.9285 45.7988 13.7075 45.7988 14.5912C45.7988 15.475 45.6229 16.2624 45.2711 16.9451Z" fill="currentColor"></path>
+      <path d="M76.8053 7.76515C76.3739 7.33375 75.8713 6.96518 75.2808 6.68037C74.3468 6.22803 73.2746 6.00186 72.0683 6.00186C70.5019 6.00186 69.0821 6.383 67.8172 7.14946C66.5523 7.91174 65.5471 8.94206 64.8016 10.2404C64.0561 11.5388 63.6875 12.988 63.6875 14.5963C63.6875 16.2046 64.0561 17.6328 64.789 18.9396C65.522 20.2463 66.523 21.2809 67.7879 22.0473C69.0527 22.8096 70.4935 23.1949 72.1018 23.1949C73.2285 23.1949 74.2714 22.9897 75.2389 22.575C75.9802 22.2567 76.6043 21.8211 77.1069 21.2725V22.8347H81.3287V0H76.8053V7.76515ZM76.2734 16.9459C75.9216 17.6286 75.4357 18.1606 74.8117 18.5459C74.1876 18.927 73.463 19.1197 72.6421 19.1197C71.8212 19.1197 71.0799 18.927 70.4265 18.5459C69.7731 18.1647 69.2663 17.6328 68.902 16.9459C68.5418 16.2632 68.3575 15.48 68.3575 14.5921C68.3575 13.7042 68.5376 12.9293 68.902 12.255C69.2622 11.5807 69.7731 11.0488 70.4265 10.6551C71.0799 10.2614 71.817 10.0687 72.6421 10.0687C73.4672 10.0687 74.1918 10.2614 74.8117 10.6425C75.4357 11.0237 75.9216 11.5556 76.2734 12.2425C76.6252 12.9252 76.8011 13.7084 76.8011 14.5963C76.8011 15.4842 76.6252 16.2674 76.2734 16.9501V16.9459Z" fill="currentColor"></path>
+      <path d="M88.5214 0H83.998V22.8263H88.5214V0Z" fill="currentColor"></path>
+      <path d="M108.003 6.36133H103.148L99.9611 15.0395C99.7014 15.6301 99.4543 16.2248 99.2114 16.8237L95.3707 6.36133H90.5164L96.9748 22.746C96.4848 24.0821 95.8984 25.481 95.178 26.214C93.243 28.6976 88.64 28.5678 88.5395 24.9114H84.0371C83.9533 28.3668 86.6129 31.5289 89.9971 32.1446C94.8262 33.1791 99.1443 29.6526 100.594 25.2967L108.003 6.36133Z" fill="currentColor"></path>
+    </g>
+    <defs>
+      <clipPath id="clip0_2061_12667">
+        <rect width="108" height="32.3296" fill="currentColor"></rect>
+      </clipPath>
+    </defs>
+  </svg>
+</div>
+        <h2 style="margin-bottom: 20px;">Organizer Console</h2>
+        <input type="text" id="session-input" placeholder="XXXX-0000" maxlength="9">
+        <button id="enter-console-btn">Launch Console</button>
+    </div>
+
+    <div class="main-content">
+        <h1>Utterance Reactions 🗣️</h1>
+        <div id="session-id-display">Loading session...</div>
+        <div id="utterances">Please specify a session ID to begin.</div>
+    </div>
+    <div class="sidebar">
+        <h2>Session Stats</h2>
+        <div id="participant-counter">Participants: 0</div>
+        <hr>
+        <h2>Top 10 Leaderboard</h2>
+        <div id="leaderboard"></div>
+        <hr>
+        <button id="reset-session-btn">Reset Session Data</button>
+    </div>
+
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+      import { getFirestore, collection, query, orderBy, onSnapshot, doc, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+      import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+
+      const firebaseConfig = {
+        apiKey: "AIzaSyBwHUWl1Ip9OAXhyKELXlk5EghuuRZ6TNo",
+        authDomain: "wordly-reaction-engine.firebaseapp.com",
+        projectId: "wordly-reaction-engine",
+        storageBucket: "wordly-reaction-engine.appspot.com",
+        messagingSenderId: "508681104777",
+        appId: "1:508681104777:web:9852c0682f8bc03a010558",
+        measurementId: "G-ST5VH4V7NW"
+      };
+
+      const app = initializeApp(firebaseConfig);
+      const db = getFirestore(app);
+      const functions = getFunctions(app);
+
+      const params = new URLSearchParams(window.location.search);
+      const sessionId = params.get('session');
+      const sessionIdDisplay = document.getElementById('session-id-display');
+
+      // --- SESSION GATE LOGIC ---
+      const gate = document.getElementById('session-gate');
+      const gateInput = document.getElementById('session-input');
+      const gateBtn = document.getElementById('enter-console-btn');
+
+      if (sessionId) {
+        gate.style.display = 'none'; // Bypass if ID exists in URL
+      }
+
+      gateBtn.onclick = () => {
+        let val = gateInput.value.trim().toUpperCase();
+        // Auto-format ABCD1234 to ABCD-1234
+        if (val.length === 8 && !val.includes('-')) {
+            val = val.slice(0, 4) + '-' + val.slice(4, 8);
+        }
+        if (val) window.location.search = `?session=${val}`;
+      };
+
+      gateInput.onkeydown = (e) => { if (e.key === 'Enter') gateBtn.click(); };
+      // --------------------------
+
+      if (!sessionId) {
+        sessionIdDisplay.innerHTML = `<span class="error-message">Awaiting Session ID...</span>`;
+        document.getElementById('reset-session-btn').style.display = 'none';
+      } else {
+        sessionIdDisplay.textContent = `Viewing Session: ${sessionId}`;
+        
+        const sessionCollection = doc(db, 'sessions', sessionId);
+
+        const utterancesQuery = query(collection(sessionCollection, "utterances"));
+        onSnapshot(utterancesQuery, (querySnapshot) => {
+          const utterancesContainer = document.getElementById('utterances');
+          utterancesContainer.innerHTML = ''; 
+          if (querySnapshot.empty) {
+            utterancesContainer.textContent = 'No reactions recorded for this session yet.';
+          }
+          querySnapshot.forEach((doc) => {
+            const utterance = doc.data();
+            const utteranceDiv = document.createElement('div');
+            utteranceDiv.innerHTML = `<p>${utterance.text}</p><span>👍 ${utterance.reaction_thumbs_up || 0}</span><span>❤️ ${utterance.reaction_heart || 0}</span><span>🤔 ${utterance.reaction_thinking || 0}</span>`;
+            utterancesContainer.appendChild(utteranceDiv);
+          });
+        });
+
+        onSnapshot(sessionCollection, (doc) => {
+          const participantCounter = document.getElementById('participant-counter');
+          const count = doc.exists() ? doc.data().participant_count : 0;
+          participantCounter.textContent = `Participants: ${count}`;
+        });
+
+        const leaderboardQuery = query(collection(sessionCollection, "participants"), orderBy("reaction_count", "desc"), limit(10));
+        onSnapshot(leaderboardQuery, (querySnapshot) => {
+          const leaderboardContainer = document.getElementById('leaderboard');
+          leaderboardContainer.innerHTML = '';
+          let rank = 1;
+          querySnapshot.forEach((doc) => {
+            const participant = doc.data();
+            const pDiv = document.createElement('div');
+            pDiv.className = 'leaderboard-item';
+            pDiv.innerHTML = `<div><span>#${rank++}: ${participant.anonymous_id.substring(0, 10)}...</span><span>${participant.reaction_count} reactions</span></div><button data-id="${participant.anonymous_id}">Send Message</button>`;
+            leaderboardContainer.appendChild(pDiv);
+          });
+        });
+      }
+
+      document.getElementById('leaderboard').addEventListener('click', async (e) => {
+        if (e.target && e.target.nodeName === 'BUTTON') {
+          const defaultMessage = "🎉 Congrats, you were the most engaged user! 🎉";
+          const messageToSend = prompt("Enter the message you want to send:", defaultMessage);
+
+          if (!messageToSend) return;
+
+          const userId = e.target.dataset.id;
+          const sendMessage = httpsCallable(functions, 'sendMessage');
+
+          try {
+            e.target.textContent = 'Sending...';
+            e.target.disabled = true;
+            await sendMessage({ sessionId: sessionId, userId: userId, message: messageToSend });
+            e.target.textContent = 'Sent!';
+            setTimeout(() => { e.target.textContent = 'Send Message'; e.target.disabled = false; }, 2000);
+          } catch (error) {
+            console.error("Error sending message:", error);
+            e.target.textContent = 'Error!';
+          }
+        }
+      });
+      
+      document.getElementById('reset-session-btn').addEventListener('click', async () => {
+        if (!sessionId) return;
+        
+        const confirmationInput = prompt(`Are you sure? This cannot be undone. Type "${sessionId}" to confirm.`);
+        
+        if (confirmationInput === null) return; 
+
+        let value = confirmationInput.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        let formattedConfirmation = (value.length > 4) ? value.slice(0, 4) + '-' + value.slice(4, 8) : value;
+
+        if (formattedConfirmation === sessionId) {
+          const resetSession = httpsCallable(functions, 'resetSession');
+          try {
+            alert('Resetting session... The page will now reload.');
+            await resetSession({ sessionId: sessionId });
+            window.location.reload();
+          } catch (error) {
+            console.error("Error resetting session:", error);
+            alert(`An error occurred: ${error.message}`);
+          }
+        } else {
+          alert('Confirmation failed. Session ID did not match.');
+        }
+      });
+
+    </script>
+</body>
+</html>
