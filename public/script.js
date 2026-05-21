@@ -264,7 +264,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <span class="speaker-name">${message.name || `Speaker ${message.speakerId.slice(-4)}`}</span>
         </div>
         <div class="phrase-text"></div>
-        <span class="reaction-hint" style="position:absolute; bottom:4px; right:8px; font-size:0.9em; opacity:0.25; pointer-events:none;">🙂</span>`;
+        <span class="reaction-hint" style="position:absolute; bottom:4px; right:8px; font-size:0.75em; opacity:0.15; pointer-events:none; filter:grayscale(100%);">🙂 •••</span>`;
 
       // Tap any utterance to react
       phraseElement.addEventListener('click', () => showReactionDialog(message));
