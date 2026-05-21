@@ -105,7 +105,7 @@ exports.addReaction = onRequest(async (request, response) => {
 });
 
 exports.sendMessage = onCall({ cors: true }, async (request) => {
-  const { sessionId, userId, message } = request.data;
+  const { sessionId, userId, message, persistent } = request.data;
   if (!sessionId || !userId || !message) {
     throw new HttpsError('invalid-argument', 'sessionId, userId, and message are required.');
   }
@@ -114,6 +114,7 @@ exports.sendMessage = onCall({ cors: true }, async (request) => {
     .collection('participants').doc(userId)
     .collection('messages').add({
       message,
+      persistent: persistent === true,
       timestamp: FieldValue.serverTimestamp()
     });
   logger.info(`Message sent to ${userId} in session ${sessionId}`);
@@ -121,7 +122,7 @@ exports.sendMessage = onCall({ cors: true }, async (request) => {
 });
 
 exports.sendBroadcast = onCall({ cors: true }, async (request) => {
-  const { sessionId, message } = request.data;
+  const { sessionId, message, persistent } = request.data;
   if (!sessionId || !message) {
     throw new HttpsError('invalid-argument', 'sessionId and message are required.');
   }
@@ -136,7 +137,7 @@ exports.sendBroadcast = onCall({ cors: true }, async (request) => {
     const msgRef = db.collection('sessions').doc(sessionId)
       .collection('participants').doc(doc.id)
       .collection('messages').doc();
-    batch.set(msgRef, { message, timestamp: FieldValue.serverTimestamp() });
+    batch.set(msgRef, { message, persistent: persistent === true, timestamp: FieldValue.serverTimestamp() });
   });
   await batch.commit();
 

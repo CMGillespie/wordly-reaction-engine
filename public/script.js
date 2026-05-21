@@ -394,7 +394,11 @@ document.addEventListener('DOMContentLoaded', () => {
           snapshot.docChanges().forEach((change) => {
             if (change.type === 'added') {
               const data = change.doc.data();
-              showNotification(data.message, 'info', 8000);
+              if (data.persistent) {
+                showPersistentNotification(data.message);
+              } else {
+                showNotification(data.message, 'info', 8000);
+              }
             }
           });
         }, (error) => {
@@ -499,5 +503,26 @@ document.addEventListener('DOMContentLoaded', () => {
       notification.classList.remove('visible');
       setTimeout(() => notification.remove(), 500);
     }, duration - 500);
+  }
+
+  // Persistent notification — stays until user taps to dismiss
+  function showPersistentNotification(message) {
+    const existing = document.querySelector('.notification-persistent');
+    if (existing) existing.remove();
+    const notification = document.createElement('div');
+    notification.className = 'notification-persistent info';
+    notification.style.cssText = `
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: #1a1a2e; color: white; padding: 14px 20px 14px 16px;
+      border-radius: 10px; z-index: 9999; max-width: 88vw;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3); font-size: 0.95em;
+      display: flex; align-items: flex-start; gap: 12px; cursor: pointer;
+    `;
+    notification.innerHTML = `
+      <span style="flex:1; line-height:1.4;">${message}</span>
+      <span style="opacity:0.6; font-size:1.2em; flex-shrink:0; margin-top:-1px;">✕</span>
+    `;
+    notification.addEventListener('click', () => notification.remove());
+    document.body.appendChild(notification);
   }
 });
