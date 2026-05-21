@@ -1,15 +1,12 @@
-// Import Firebase Functions modules.
-const { onRequest, onCall } = require("firebase-functions/v2/https");
+// functions/index.js
+// v2 - Add thumbs_down + question emoji, fix HttpsError references
+const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
-
-// Import and initialize the Firebase Admin SDK.
 const admin = require("firebase-admin");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 admin.initializeApp();
 
-// Define the "addReaction" HTTP function.
 exports.addReaction = onRequest(async (request, response) => {
-  // Set CORS headers
   response.set('Access-Control-Allow-Origin', '*');
   if (request.method === 'OPTIONS') {
     response.set('Access-Control-Allow-Methods', 'POST');
@@ -23,10 +20,9 @@ exports.addReaction = onRequest(async (request, response) => {
     return;
   }
 
-  // Read session_id from the request body
   const { session_id, utterance_guid, reaction_type, text, language, anonymous_id } = request.body;
   if (!session_id || !utterance_guid || !reaction_type) {
-    response.status(400).send("Missing session_id, utterance_guid, or reaction_type in request.");
+    response.status(400).send("Missing session_id, utterance_guid, or reaction_type.");
     return;
   }
 
@@ -34,143 +30,136 @@ exports.addReaction = onRequest(async (request, response) => {
 
   try {
     await db.runTransaction(async (transaction) => {
-      // All document references are now nested under the session_id
-      const sessionCollection = db.collection('sessions').doc(session_id);
+      const sessionDoc = db.collection('sessions').doc(session_id);
+      const utteranceRef = sessionDoc.collection("utterances").doc(utterance_guid);
+      const participantRef = sessionDoc.collection('participants').doc(anonymous_id || 'anonymous');
 
-      const utteranceRef = sessionCollection.collection("utterances").doc(utterance_guid);
-      const participantRef = sessionCollection.collection('participants').doc(anonymous_id || 'anonymous');
-      
-      const utteranceDoc = await transaction.get(utteranceRef);
-      const participantDoc = anonymous_id ? await transaction.get(participantRef) : null;
+      const utteranceSnapshot = await transaction.get(utteranceRef);
+      const participantSnapshot = anonymous_id ? await transaction.get(participantRef) : null;
 
-      // Update the utterance document
-      if (!utteranceDoc.exists) {
-        if (!text || !language) throw new Error("Utterance document does not exist, and text/language were not provided.");
-        const newDocData = {
-          text: text, language: language,
-          first_seen_at: FieldValue.serverTimestamp(), last_reacted_at: FieldValue.serverTimestamp(),
-          reaction_thumbs_up: reaction_type === '👍' ? 1 : 0,
-          reaction_heart: reaction_type === '❤️' ? 1 : 0,
-          reaction_thinking: reaction_type === '🤔' ? 1 : 0,
-        };
-        transaction.set(utteranceRef, newDocData);
+      // --- Utterance document ---
+      if (!utteranceSnapshot.exists) {
+        if (!text || !language) throw new Error("New utterance missing text/language.");
+        transaction.set(utteranceRef, {
+          text, language,
+          first_seen_at: FieldValue.serverTimestamp(),
+          last_reacted_at: FieldValue.serverTimestamp(),
+          reaction_thumbs_up:   reaction_type === '👍' ? 1 : 0,
+          reaction_thumbs_down: reaction_type === '👎' ? 1 : 0,
+          reaction_heart:       reaction_type === '❤️' ? 1 : 0,
+          reaction_thinking:    reaction_type === '🤔' ? 1 : 0,
+          reaction_question:    reaction_type === '❓' ? 1 : 0,
+        });
       } else {
         const updateData = { last_reacted_at: FieldValue.serverTimestamp() };
-        if (reaction_type === '👍') updateData.reaction_thumbs_up = FieldValue.increment(1);
-        if (reaction_type === '❤️') updateData.reaction_heart = FieldValue.increment(1);
-        if (reaction_type === '🤔') updateData.reaction_thinking = FieldValue.increment(1);
+        if (reaction_type === '👍') updateData.reaction_thumbs_up   = FieldValue.increment(1);
+        if (reaction_type === '👎') updateData.reaction_thumbs_down = FieldValue.increment(1);
+        if (reaction_type === '❤️') updateData.reaction_heart       = FieldValue.increment(1);
+        if (reaction_type === '🤔') updateData.reaction_thinking    = FieldValue.increment(1);
+        if (reaction_type === '❓') updateData.reaction_question    = FieldValue.increment(1);
         transaction.update(utteranceRef, updateData);
       }
 
-      // Log the user's reaction
+      // --- User reaction log ---
       if (anonymous_id) {
-        const userReactionRef = sessionCollection.collection('user_reactions').doc();
+        const userReactionRef = sessionDoc.collection('user_reactions').doc();
         transaction.set(userReactionRef, {
-          anonymous_id: anonymous_id, utterance_guid: utterance_guid,
-          reaction_type: reaction_type, timestamp: FieldValue.serverTimestamp()
+          anonymous_id, utterance_guid, reaction_type,
+          timestamp: FieldValue.serverTimestamp()
         });
       }
 
-      // Update Participant Counter & Leaderboard
-      if (anonymous_id && participantDoc) {
-         const sessionSummaryRef = sessionCollection;
-        if (!participantDoc.exists) {
-          transaction.set(participantRef, { reaction_count: 1, anonymous_id: anonymous_id });
-          transaction.set(sessionSummaryRef, { participant_count: FieldValue.increment(1) }, { merge: true });
+      // --- Participant counter + leaderboard ---
+      if (anonymous_id && participantSnapshot) {
+        if (!participantSnapshot.exists) {
+          transaction.set(participantRef, { reaction_count: 1, anonymous_id });
+          transaction.set(sessionDoc, { participant_count: FieldValue.increment(1) }, { merge: true });
         } else {
           transaction.update(participantRef, { reaction_count: FieldValue.increment(1) });
         }
       }
     });
 
-    response.status(200).send("Reaction successfully recorded.");
+    response.status(200).send("Reaction recorded.");
   } catch (error) {
-    logger.error("Transaction failed: ", error);
+    logger.error("Transaction failed:", error);
     response.status(500).send("Error writing to database.");
   }
 });
 
-// "sendMessage" is now session-aware
-exports.sendMessage = onCall({ cors: true }, (request) => {
-  const sessionId = request.data.sessionId;
-  const userId = request.data.userId;
-  const messageText = request.data.message;
-
-  if (!sessionId || !userId || !messageText) {
-    throw new functions.https.HttpsError('invalid-argument', 'The function must be called with "sessionId", "userId", and "message" arguments.');
+exports.sendMessage = onCall({ cors: true }, async (request) => {
+  const { sessionId, userId, message } = request.data;
+  if (!sessionId || !userId || !message) {
+    throw new HttpsError('invalid-argument', 'sessionId, userId, and message are required.');
   }
-
   const db = getFirestore();
-  const messagePath = `sessions/${sessionId}/participants/${userId}/messages`;
-
-  return db.collection(messagePath).add({
-    message: messageText,
-    timestamp: FieldValue.serverTimestamp()
-  }).then(() => {
-    logger.info(`Message sent to ${userId} in session ${sessionId}`);
-    return { status: 'success' };
-  });
-});
-
-// --- NEW FUNCTION: resetSession ---
-exports.resetSession = onCall({ cors: true }, async (request) => {
-  const sessionId = request.data.sessionId;
-  if (!sessionId) {
-    throw new functions.https.HttpsError('invalid-argument', 'The function must be called with a "sessionId" argument.');
-  }
-
-  const db = getFirestore();
-  const sessionRef = db.collection('sessions').doc(sessionId);
-
-  logger.info(`Starting reset for session: ${sessionId}`);
-
-  // Delete subcollections first
-  await deleteCollection(db, sessionRef.collection('utterances'));
-  await deleteCollection(db, sessionRef.collection('participants'));
-  await deleteCollection(db, sessionRef.collection('user_reactions'));
-  
-  // Finally, delete the main session document itself
-  await sessionRef.delete();
-
-  logger.info(`Successfully reset session: ${sessionId}`);
-  return { status: 'success', message: `Session ${sessionId} has been reset.` };
-});
-
-// Helper function to delete collections recursively
-async function deleteCollection(db, collectionRef, batchSize = 100) {
-  const query = collectionRef.limit(batchSize);
-
-  return new Promise((resolve, reject) => {
-    deleteQueryBatch(db, query, resolve).catch(reject);
-  });
-}
-
-async function deleteQueryBatch(db, query, resolve) {
-  const snapshot = await query.get();
-
-  const batchSize = snapshot.size;
-  if (batchSize === 0) {
-    // When there are no documents left, we are done
-    resolve();
-    return;
-  }
-
-  // Delete documents in a batch
-  const batch = db.batch();
-  snapshot.docs.forEach((doc) => {
-    // Recursively delete sub-collections of each document (for participants/messages)
-    const subcollections = doc.ref.listCollections();
-    subcollections.then(collections => {
-        for (let collection of collections) {
-            deleteCollection(db, collection);
-        }
+  await db.collection('sessions').doc(sessionId)
+    .collection('participants').doc(userId)
+    .collection('messages').add({
+      message,
+      timestamp: FieldValue.serverTimestamp()
     });
-    batch.delete(doc.ref);
+  logger.info(`Message sent to ${userId} in session ${sessionId}`);
+  return { status: 'success' };
+});
+
+exports.sendBroadcast = onCall({ cors: true }, async (request) => {
+  // Send a message to ALL participants in a session
+  const { sessionId, message } = request.data;
+  if (!sessionId || !message) {
+    throw new HttpsError('invalid-argument', 'sessionId and message are required.');
+  }
+  const db = getFirestore();
+  const participantsSnap = await db.collection('sessions').doc(sessionId)
+    .collection('participants').get();
+
+  if (participantsSnap.empty) {
+    return { status: 'success', sent: 0 };
+  }
+
+  const batch = db.batch();
+  participantsSnap.docs.forEach(doc => {
+    const msgRef = db.collection('sessions').doc(sessionId)
+      .collection('participants').doc(doc.id)
+      .collection('messages').doc();
+    batch.set(msgRef, { message, timestamp: FieldValue.serverTimestamp() });
   });
   await batch.commit();
 
-  // Recurse on the next process tick, to avoid hitting stack limits
-  process.nextTick(() => {
-    deleteQueryBatch(db, query, resolve);
-  });
+  logger.info(`Broadcast sent to ${participantsSnap.size} participants in session ${sessionId}`);
+  return { status: 'success', sent: participantsSnap.size };
+});
+
+exports.resetSession = onCall({ cors: true }, async (request) => {
+  const { sessionId } = request.data;
+  if (!sessionId) {
+    throw new HttpsError('invalid-argument', 'sessionId is required.');
+  }
+  const db = getFirestore();
+  const sessionRef = db.collection('sessions').doc(sessionId);
+
+  await deleteCollection(sessionRef.collection('utterances'));
+  await deleteCollection(sessionRef.collection('user_reactions'));
+
+  // Delete participants and their messages subcollection
+  const participantsSnap = await sessionRef.collection('participants').get();
+  for (const pDoc of participantsSnap.docs) {
+    await deleteCollection(pDoc.ref.collection('messages'));
+    await pDoc.ref.delete();
+  }
+
+  await sessionRef.delete();
+  logger.info(`Reset session: ${sessionId}`);
+  return { status: 'success' };
+});
+
+async function deleteCollection(collectionRef, batchSize = 100) {
+  const snapshot = await collectionRef.limit(batchSize).get();
+  if (snapshot.empty) return;
+  const batch = collectionRef.firestore.batch();
+  snapshot.docs.forEach(doc => batch.delete(doc.ref));
+  await batch.commit();
+  if (snapshot.size === batchSize) {
+    await deleteCollection(collectionRef, batchSize);
+  }
 }
