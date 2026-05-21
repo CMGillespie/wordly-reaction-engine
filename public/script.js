@@ -1,6 +1,7 @@
-// Wordly Secure Viewer Script (v19 - Reaction Engine + Background Persistence)
+// Wordly Secure Viewer Script (v20 - Local reaction tracking + dedup)
 // v18: Silent audio loop, Media Session API, Page Visibility reconnect
-// v19: Reaction engine ported - 5 emojis, anonymous ID, message listener
+// v19: Reaction engine - 5 emojis, anonymous ID, message listener
+// v20: Local reaction memory per bubble, dedup display, multi-emoji support
 document.addEventListener('DOMContentLoaded', () => {
 
   if ('serviceWorker' in navigator) {
@@ -35,8 +36,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const newMessageCountSpan = document.getElementById('new-message-count');
   const fontSizeToggleBtn = document.getElementById('font-size-toggle-btn');
   const fontBoldToggleBtn = document.getElementById('font-bold-toggle-btn');
-
-  // --- Reaction Engine DOM Elements ---
   const reactionDialog = document.getElementById('reaction-dialog');
   const dialogOverlay = document.getElementById('dialog-overlay');
 
@@ -52,6 +51,8 @@ document.addEventListener('DOMContentLoaded', () => {
     headerCollapsed: false, headerCollapseTimeout: null, contentHidden: false,
     userScrolledUp: false, newMessagesWhileScrolled: 0, fontSize: 'normal',
     fontBold: false, darkMode: false,
+    // v20: local reaction memory { utteranceId: Set of reaction types }
+    myReactions: {},
   };
 
   const languageMap = { 'af': 'Afrikaans', 'sq': 'Albanian', 'ar': 'Arabic', 'hy': 'Armenian', 'bn': 'Bengali', 'bg': 'Bulgarian', 'zh-HK': 'Cantonese', 'ca': 'Catalan', 'zh-CN': 'Chinese (Simplified)', 'zh-TW': 'Chinese (Traditional)', 'hr': 'Croatian', 'cs': 'Czech', 'da': 'Danish', 'nl': 'Dutch', 'en': 'English (US)', 'en-AU': 'English (AU)', 'en-GB': 'English (UK)', 'et': 'Estonian', 'fi': 'Finnish', 'fr': 'French (FR)', 'fr-CA': 'French (CA)', 'ka': 'Georgian', 'de': 'German', 'el': 'Greek', 'gu': 'Gujarati', 'he': 'Hebrew', 'hi': 'Hindi', 'hu': 'Hungarian', 'is': 'Icelandic', 'id': 'Indonesian', 'ga': 'Irish', 'it': 'Italian', 'ja': 'Japanese', 'kn': 'Kannada', 'ko': 'Korean', 'lv': 'Latvian', 'lt': 'Lithuanian', 'mk': 'Macedonian', 'ms': 'Malay', 'mt': 'Maltese', 'no': 'Norwegian', 'fa': 'Persian', 'pl': 'Polish', 'pt': 'Portuguese (PT)', 'pt-BR': 'Portuguese (BR)', 'ro': 'Romanian', 'ru': 'Russian', 'sr': 'Serbian', 'sk': 'Slovak', 'sl': 'Slovenian', 'es': 'Spanish (ES)', 'es-MX': 'Spanish (MX)', 'sv': 'Swedish', 'tl': 'Tagalog', 'th': 'Thai', 'tr': 'Turkish', 'uk': 'Ukrainian', 'vi': 'Vietnamese', 'cy': 'Welsh', 'pa': 'Punjabi', 'sw': 'Swahili', 'ta': 'Tamil', 'ur': 'Urdu', 'zh': 'Chinese' };
@@ -66,9 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
   silentAudio.volume = 0.001;
 
   function startSilentAudio() {
-    if (silentAudio.paused) {
-      silentAudio.play().catch(() => {});
-    }
+    if (silentAudio.paused) silentAudio.play().catch(() => {});
   }
 
   function stopSilentAudio() {
@@ -90,13 +89,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-      console.log('App foregrounded — checking connection.');
-      if (wakeLockBtn.classList.contains('active') && !screenWakeLock) {
-        requestWakeLock();
-      }
+      if (wakeLockBtn.classList.contains('active') && !screenWakeLock) requestWakeLock();
       if (state.sessionId && !state.isDeliberateDisconnect) {
         if (!state.websocket || state.websocket.readyState === WebSocket.CLOSED) {
-          console.log('WebSocket dead after background — reconnecting.');
           if (state.reconnectInterval) clearInterval(state.reconnectInterval);
           connectWebSocket();
         }
@@ -105,7 +100,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   // --- END v18 ---
 
-  // --- Initialization ---
   init();
 
   function init() {
@@ -148,12 +142,12 @@ document.addEventListener('DOMContentLoaded', () => {
     configInputArea.style.display = 'none';
     appPage.style.display = 'flex';
     state.isDeliberateDisconnect = false;
+    state.myReactions = {}; // reset local reaction memory for new session
 
     if (sessionDisplayHeader) {
       sessionDisplayHeader.textContent = `Session: ${maskSessionId(state.sessionId)}`;
     }
     populateLanguageSelect(languageSelect, 'en');
-
     startSilentAudio();
     setupMediaSession();
     setupMessageListener();
@@ -179,13 +173,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function handleAudioToggle() {
     state.audioEnabled = audioToggle.checked;
     resetHeaderCollapseTimer();
-    if (state.audioEnabled) {
-      sendVoiceRequest(true);
-      processAudioQueue();
-    } else {
-      sendVoiceRequest(false);
-      stopAndClearAudio();
-    }
+    if (state.audioEnabled) { sendVoiceRequest(true); processAudioQueue(); }
+    else { sendVoiceRequest(false); stopAndClearAudio(); }
   }
 
   function handleLanguageChange() {
@@ -220,10 +209,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const message = JSON.parse(event.data);
       switch (message.type) {
         case 'status':
-          if (message.success) {
-            updateStatus('connected');
-            if (state.audioEnabled) sendVoiceRequest(true);
-          } else { updateStatus('error'); }
+          if (message.success) { updateStatus('connected'); if (state.audioEnabled) sendVoiceRequest(true); }
+          else { updateStatus('error'); }
           break;
         case 'phrase': handlePhrase(message); break;
         case 'speech':
@@ -255,18 +242,15 @@ document.addEventListener('DOMContentLoaded', () => {
       phraseElement.id = `phrase-${message.phraseId}`;
       phraseElement.className = 'phrase';
 
-      if (rtlLanguages.includes(languageSelect.value)) {
-        phraseElement.classList.add('rtl');
-      }
+      if (rtlLanguages.includes(languageSelect.value)) phraseElement.classList.add('rtl');
 
       phraseElement.innerHTML = `
         <div class="phrase-header">
           <span class="speaker-name">${message.name || `Speaker ${message.speakerId.slice(-4)}`}</span>
         </div>
         <div class="phrase-text"></div>
-        <span class="reaction-hint" style="position:absolute; bottom:4px; right:8px; font-size:0.75em; opacity:0.65; pointer-events:none; filter:grayscale(100%);">🙂 •••</span>`;
+        <span class="reaction-hint" style="position:absolute; bottom:4px; right:8px; font-size:0.75em; opacity:0.35; pointer-events:none; filter:grayscale(100%);">🙂 •••</span>`;
 
-      // Tap any utterance to react
       phraseElement.addEventListener('click', () => showReactionDialog(message));
 
       if (state.scrollDirection === 'down') {
@@ -291,7 +275,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // --- v19: REACTION ENGINE ---
+  // --- v20: Update the reaction hint on a bubble to show what the user picked ---
+  function updateBubbleReactionDisplay(phraseId) {
+    const phraseElement = document.getElementById(`phrase-${phraseId}`);
+    if (!phraseElement) return;
+    const hint = phraseElement.querySelector('.reaction-hint');
+    if (!hint) return;
+
+    const myReactionsForThis = state.myReactions[phraseId];
+    if (myReactionsForThis && myReactionsForThis.size > 0) {
+      // Show their chosen emojis, full opacity, no greyscale
+      hint.textContent = Array.from(myReactionsForThis).join(' ');
+      hint.style.opacity = '1';
+      hint.style.filter = 'none';
+      hint.style.fontSize = '0.85em';
+    }
+  }
+
+  // --- REACTION ENGINE ---
 
   function getOrCreateAnonymousId() {
     let id = localStorage.getItem('wordlyAnonymousId');
@@ -326,19 +327,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function handleReactionClick(reactionType) {
     if (!activeUtteranceData) return;
-    sendReactionToFirebase(reactionType);
+    const phraseId = activeUtteranceData.phraseId;
+    // Capture before hideReactionDialog nulls it
+    const capturedUtteranceData = activeUtteranceData;
+
+    // v20: track locally regardless of whether backend accepts it
+    if (!state.myReactions[phraseId]) {
+      state.myReactions[phraseId] = new Set();
+    }
+    const alreadyReacted = state.myReactions[phraseId].has(reactionType);
+    state.myReactions[phraseId].add(reactionType);
+
+    updateBubbleReactionDisplay(phraseId);
     hideReactionDialog();
+
+    if (alreadyReacted) {
+      showNotification(`You already reacted with ${reactionType}`, 'info');
+      return;
+    }
+
+    sendReactionToFirebase(reactionType, capturedUtteranceData);
   }
 
-  async function sendReactionToFirebase(reactionType) {
-    if (!activeUtteranceData || !state.sessionId) return;
+  async function sendReactionToFirebase(reactionType, utteranceData) {
+    if (!utteranceData || !state.sessionId) return;
     const anonymousId = getOrCreateAnonymousId();
     const payload = {
       session_id:     state.sessionId,
-      utterance_guid: activeUtteranceData.phraseId,
+      utterance_guid: utteranceData.phraseId,
       reaction_type:  reactionType,
-      text:           activeUtteranceData.translatedText || '',
-      language:       activeUtteranceData.translatedLanguageCode || languageSelect.value || 'en',
+      text:           utteranceData.translatedText || '',
+      language:       utteranceData.translatedLanguageCode || languageSelect.value || 'en',
       anonymous_id:   anonymousId
     };
     try {
@@ -365,7 +384,6 @@ document.addEventListener('DOMContentLoaded', () => {
       messageListenerUnsubscribe();
       messageListenerUnsubscribe = null;
     }
-    // Firebase loads async — poll until ready
     const waitForFirebase = setInterval(() => {
       if (window.appDb && window.firestore) {
         clearInterval(waitForFirebase);
@@ -382,14 +400,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }, (error) => {
           console.error('Message listener error:', error);
         });
-        console.log(`Message listener active: ${anonymousId} / ${state.sessionId}`);
       }
     }, 200);
     setTimeout(() => clearInterval(waitForFirebase), 10000);
   }
 
-  // --- END v19 ---
-
+  // --- AUDIO ---
   function processAudioQueue() {
     if (state.isPlayingAudio || !state.audioEnabled || state.audioQueue.length === 0) return;
     state.isPlayingAudio = true;
@@ -431,6 +447,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // --- UI UTILITIES ---
   function updateStatus(status) { connectionStatusLight.className = `status-light ${status}`; }
 
   function handleScrollDirectionToggle() {

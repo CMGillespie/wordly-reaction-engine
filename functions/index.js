@@ -1,5 +1,5 @@
 // functions/index.js
-// v2 - Add thumbs_down + question emoji, fix HttpsError references
+// v3 - Add reaction deduplication per user+utterance+type
 const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
 const admin = require("firebase-admin");
@@ -29,13 +29,31 @@ exports.addReaction = onRequest(async (request, response) => {
   const db = getFirestore();
 
   try {
-    await db.runTransaction(async (transaction) => {
-      const sessionDoc = db.collection('sessions').doc(session_id);
-      const utteranceRef = sessionDoc.collection("utterances").doc(utterance_guid);
-      const participantRef = sessionDoc.collection('participants').doc(anonymous_id || 'anonymous');
+    const sessionDoc = db.collection('sessions').doc(session_id);
+    const utteranceRef = sessionDoc.collection("utterances").doc(utterance_guid);
+    const participantRef = sessionDoc.collection('participants').doc(anonymous_id || 'anonymous');
 
+    // Dedup check: has this user already sent this reaction type for this utterance?
+    // Use a deterministic doc ID: anonymous_id + utterance_guid + reaction_type
+    const dedupeId = anonymous_id
+      ? `${anonymous_id}_${utterance_guid}_${reaction_type.codePointAt(0)}`
+      : null;
+    const userReactionRef = dedupeId
+      ? sessionDoc.collection('user_reactions').doc(dedupeId)
+      : null;
+
+    await db.runTransaction(async (transaction) => {
       const utteranceSnapshot = await transaction.get(utteranceRef);
       const participantSnapshot = anonymous_id ? await transaction.get(participantRef) : null;
+
+      // Check for duplicate reaction
+      if (userReactionRef) {
+        const existingReaction = await transaction.get(userReactionRef);
+        if (existingReaction.exists) {
+          // Silently ignore — already counted
+          return;
+        }
+      }
 
       // --- Utterance document ---
       if (!utteranceSnapshot.exists) {
@@ -60,9 +78,8 @@ exports.addReaction = onRequest(async (request, response) => {
         transaction.update(utteranceRef, updateData);
       }
 
-      // --- User reaction log ---
-      if (anonymous_id) {
-        const userReactionRef = sessionDoc.collection('user_reactions').doc();
+      // --- User reaction log (deterministic ID prevents duplicates) ---
+      if (userReactionRef) {
         transaction.set(userReactionRef, {
           anonymous_id, utterance_guid, reaction_type,
           timestamp: FieldValue.serverTimestamp()
@@ -104,7 +121,6 @@ exports.sendMessage = onCall({ cors: true }, async (request) => {
 });
 
 exports.sendBroadcast = onCall({ cors: true }, async (request) => {
-  // Send a message to ALL participants in a session
   const { sessionId, message } = request.data;
   if (!sessionId || !message) {
     throw new HttpsError('invalid-argument', 'sessionId and message are required.');
@@ -113,9 +129,7 @@ exports.sendBroadcast = onCall({ cors: true }, async (request) => {
   const participantsSnap = await db.collection('sessions').doc(sessionId)
     .collection('participants').get();
 
-  if (participantsSnap.empty) {
-    return { status: 'success', sent: 0 };
-  }
+  if (participantsSnap.empty) return { status: 'success', sent: 0 };
 
   const batch = db.batch();
   participantsSnap.docs.forEach(doc => {
@@ -141,7 +155,6 @@ exports.resetSession = onCall({ cors: true }, async (request) => {
   await deleteCollection(sessionRef.collection('utterances'));
   await deleteCollection(sessionRef.collection('user_reactions'));
 
-  // Delete participants and their messages subcollection
   const participantsSnap = await sessionRef.collection('participants').get();
   for (const pDoc of participantsSnap.docs) {
     await deleteCollection(pDoc.ref.collection('messages'));
