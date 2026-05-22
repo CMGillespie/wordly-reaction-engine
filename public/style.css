@@ -1,22 +1,22 @@
 /* --- Customizable Variables --- */
 :root {
-  /* Light Theme (Default) */
+  /* Light Theme (Default) - Wordly brand colors */
   --primary-bg-color: #f5f5f5;
-  --header-bg-color: #2c3e50;
+  --header-bg-color: #0a6ebd;
   --header-text-color: #ffffff;
   --content-bg-color: #ffffff;
   --transcript-bg-color: #f9f9f9;
-  --bubble-bg-color: #e0e0e0;
-  --bubble-text-color: #333333;
-  --playing-bubble-bg-color: #a0d8ef;
-  --accent-color: #2980b9;
+  --bubble-bg-color: #f0f4f8;
+  --bubble-text-color: #1a1a2e;
+  --playing-bubble-bg-color: #cce4f7;
+  --accent-color: #0a6ebd;
   --error-color: #e74c3c;
   --warning-color: #f39c12;
   --success-color: #2ecc71;
-  --font-family: Arial, sans-serif;
+  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
   --base-font-size: 16px;
   --large-font-size: 1.2em;
-  --logo-height: 30px;
+  --logo-height: 28px;
   --header-height-expanded: auto;
   --header-height-collapsed: 50px;
   /* Theme Toggle Button */
@@ -512,9 +512,9 @@ button.disconnect-btn:hover {
 
 /* Chat Bubble Styling */
 .phrase {
-  margin-bottom: 12px;
-  padding: 8px 12px;
-  border-radius: 12px;
+  margin-bottom: 10px;
+  padding: 10px 14px;
+  border-radius: 16px;
   background-color: var(--bubble-bg-color);
   color: var(--bubble-text-color);
   max-width: 95%;
@@ -532,10 +532,21 @@ button.disconnect-btn:hover {
 .phrase-header {
   display: flex;
   justify-content: space-between;
-  font-size: 0.8em;
+  font-size: 0.75em;
   color: inherit;
-  opacity: 0.7;
-  margin-bottom: 4px;
+  opacity: 0.55;
+  margin-bottom: 3px;
+}
+
+/* Speaker change indicator - >> shown between speakers */
+.speaker-change-indicator {
+  font-size: 0.75em;
+  color: var(--accent-color);
+  opacity: 0.6;
+  padding: 2px 0 4px 4px;
+  display: block;
+  font-weight: 600;
+  letter-spacing: 1px;
 }
 
 .phrase-time {
@@ -826,29 +837,36 @@ input:focus-visible + .slider {
 
 /* The pop-up dialog, hidden by default */
 #reaction-dialog {
-  display: none; 
+  display: none;
   position: fixed;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  border: 1px solid #ccc;
+  border: 1px solid rgba(0,0,0,0.1);
   background-color: var(--content-bg-color);
-  padding: 20px;
-  border-radius: 12px;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+  padding: 16px 12px;
+  border-radius: 16px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.25);
   z-index: 1000;
+  flex-direction: row;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
 }
 /* The buttons inside the dialog */
 #reaction-dialog button {
-  font-size: 2.5em; /* Larger buttons */
-  margin: 0 15px;
+  font-size: 2em;
+  margin: 0 6px;
   border: none;
   background: none;
   cursor: pointer;
-  transition: transform 0.2s ease;
+  transition: transform 0.15s ease;
+  padding: 4px;
+  border-radius: 8px;
 }
 #reaction-dialog button:hover {
-  transform: scale(1.2);
+  transform: scale(1.25);
+  background-color: rgba(0,0,0,0.05);
 }
 /* A semi-transparent background overlay */
 #dialog-overlay {

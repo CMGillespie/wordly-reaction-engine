@@ -42,6 +42,9 @@ document.addEventListener('DOMContentLoaded', () => {
   let screenWakeLock = null;
   let activeUtteranceData = null;
   let messageListenerUnsubscribe = null;
+  // v21: track last speaker for >> change indicator
+  let lastSpeakerId = null;
+  let lastSpeakerTag = null;
 
   // --- Application State ---
   const state = {
@@ -161,6 +164,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.websocket) state.websocket.close(1000, "User disconnected");
     stopAndClearAudio();
     stopSilentAudio();
+    lastSpeakerId = null;
+    lastSpeakerTag = null;
     if (messageListenerUnsubscribe) {
       messageListenerUnsubscribe();
       messageListenerUnsubscribe = null;
@@ -244,10 +249,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (rtlLanguages.includes(languageSelect.value)) phraseElement.classList.add('rtl');
 
+      // v21: >> speaker change indicator per Jim's note
+      // Show >> when speakerId or speakerTag changes from the previous phrase
+      const speakerChanged = (message.speakerId !== lastSpeakerId) || (message.speakerTag !== lastSpeakerTag);
+      const speakerIndicator = speakerChanged && (lastSpeakerId !== null)
+        ? `<span class="speaker-change-indicator">&gt;&gt;</span>` : '';
+      lastSpeakerId = message.speakerId;
+      lastSpeakerTag = message.speakerTag || null;
+
       phraseElement.innerHTML = `
-        <div class="phrase-header">
-          <span class="speaker-name">${message.name || `Speaker ${message.speakerId.slice(-4)}`}</span>
-        </div>
+        ${speakerIndicator}
         <div class="phrase-text"></div>
         <span class="reaction-hint" style="position:absolute; bottom:4px; right:8px; font-size:0.75em; opacity:0.35; pointer-events:none; filter:grayscale(100%);">🙂 •••</span>`;
 
