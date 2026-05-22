@@ -1,11 +1,59 @@
 // functions/index.js
-// v3 - Add reaction deduplication per user+utterance+type
+// v4 - Add registerAttendee, attendee_count tracking, engagement metrics
 const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
 const admin = require("firebase-admin");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 admin.initializeApp();
 
+// --- REGISTER ATTENDEE ---
+// Called when attendee app connects to a session, before any reaction.
+// Creates participant doc if not exists, increments attendee_count on session.
+exports.registerAttendee = onRequest(async (request, response) => {
+  response.set('Access-Control-Allow-Origin', '*');
+  if (request.method === 'OPTIONS') {
+    response.set('Access-Control-Allow-Methods', 'POST');
+    response.set('Access-Control-Allow-Headers', 'Content-Type');
+    response.set('Access-control-max-age', '3600');
+    response.status(204).send('');
+    return;
+  }
+  if (request.method !== 'POST') { response.status(405).send('Method Not Allowed'); return; }
+
+  const { session_id, anonymous_id } = request.body;
+  if (!session_id || !anonymous_id) {
+    response.status(400).send('Missing session_id or anonymous_id.');
+    return;
+  }
+
+  const db = getFirestore();
+  const sessionRef = db.collection('sessions').doc(session_id);
+  const participantRef = sessionRef.collection('participants').doc(anonymous_id);
+
+  try {
+    await db.runTransaction(async (transaction) => {
+      const participantSnap = await transaction.get(participantRef);
+      if (!participantSnap.exists) {
+        // New attendee — create doc and increment attendee_count
+        transaction.set(participantRef, {
+          anonymous_id,
+          reaction_count: 0,
+          registered_at: FieldValue.serverTimestamp()
+        });
+        transaction.set(sessionRef, {
+          attendee_count: FieldValue.increment(1)
+        }, { merge: true });
+      }
+      // If already exists, do nothing — idempotent
+    });
+    response.status(200).send('Registered.');
+  } catch (error) {
+    logger.error('registerAttendee failed:', error);
+    response.status(500).send('Error registering attendee.');
+  }
+});
+
+// --- ADD REACTION ---
 exports.addReaction = onRequest(async (request, response) => {
   response.set('Access-Control-Allow-Origin', '*');
   if (request.method === 'OPTIONS') {
@@ -15,49 +63,42 @@ exports.addReaction = onRequest(async (request, response) => {
     response.status(204).send('');
     return;
   }
-  if (request.method !== "POST") {
-    response.status(405).send("Method Not Allowed");
-    return;
-  }
+  if (request.method !== 'POST') { response.status(405).send('Method Not Allowed'); return; }
 
   const { session_id, utterance_guid, reaction_type, text, language, anonymous_id } = request.body;
   if (!session_id || !utterance_guid || !reaction_type) {
-    response.status(400).send("Missing session_id, utterance_guid, or reaction_type.");
+    response.status(400).send('Missing session_id, utterance_guid, or reaction_type.');
     return;
   }
 
   const db = getFirestore();
 
   try {
-    const sessionDoc = db.collection('sessions').doc(session_id);
-    const utteranceRef = sessionDoc.collection("utterances").doc(utterance_guid);
-    const participantRef = sessionDoc.collection('participants').doc(anonymous_id || 'anonymous');
+    const sessionRef = db.collection('sessions').doc(session_id);
+    const utteranceRef = sessionRef.collection('utterances').doc(utterance_guid);
+    const participantRef = sessionRef.collection('participants').doc(anonymous_id || 'anonymous');
 
-    // Dedup check: has this user already sent this reaction type for this utterance?
-    // Use a deterministic doc ID: anonymous_id + utterance_guid + reaction_type
+    // Deterministic dedup ID prevents duplicate reactions
     const dedupeId = anonymous_id
       ? `${anonymous_id}_${utterance_guid}_${reaction_type.codePointAt(0)}`
       : null;
     const userReactionRef = dedupeId
-      ? sessionDoc.collection('user_reactions').doc(dedupeId)
+      ? sessionRef.collection('user_reactions').doc(dedupeId)
       : null;
 
     await db.runTransaction(async (transaction) => {
-      const utteranceSnapshot = await transaction.get(utteranceRef);
-      const participantSnapshot = anonymous_id ? await transaction.get(participantRef) : null;
+      const utteranceSnap = await transaction.get(utteranceRef);
+      const participantSnap = anonymous_id ? await transaction.get(participantRef) : null;
 
-      // Check for duplicate reaction
+      // Dedup check
       if (userReactionRef) {
         const existingReaction = await transaction.get(userReactionRef);
-        if (existingReaction.exists) {
-          // Silently ignore — already counted
-          return;
-        }
+        if (existingReaction.exists) return; // Already counted
       }
 
-      // --- Utterance document ---
-      if (!utteranceSnapshot.exists) {
-        if (!text || !language) throw new Error("New utterance missing text/language.");
+      // Utterance document
+      if (!utteranceSnap.exists) {
+        if (!text || !language) throw new Error('New utterance missing text/language.');
         transaction.set(utteranceRef, {
           text, language,
           first_seen_at: FieldValue.serverTimestamp(),
@@ -78,7 +119,7 @@ exports.addReaction = onRequest(async (request, response) => {
         transaction.update(utteranceRef, updateData);
       }
 
-      // --- User reaction log (deterministic ID prevents duplicates) ---
+      // User reaction log
       if (userReactionRef) {
         transaction.set(userReactionRef, {
           anonymous_id, utterance_guid, reaction_type,
@@ -86,24 +127,44 @@ exports.addReaction = onRequest(async (request, response) => {
         });
       }
 
-      // --- Participant counter + leaderboard ---
-      if (anonymous_id && participantSnapshot) {
-        if (!participantSnapshot.exists) {
-          transaction.set(participantRef, { reaction_count: 1, anonymous_id });
-          transaction.set(sessionDoc, { participant_count: FieldValue.increment(1) }, { merge: true });
+      // Participant — increment reaction_count
+      // participant_count only increments on FIRST reaction (not on registration)
+      if (anonymous_id && participantSnap) {
+        if (!participantSnap.exists) {
+          // Reacted before registering (edge case) — create doc
+          transaction.set(participantRef, {
+            anonymous_id,
+            reaction_count: 1,
+            registered_at: FieldValue.serverTimestamp()
+          });
+          // Increment both counts since they weren't registered
+          transaction.set(sessionRef, {
+            attendee_count: FieldValue.increment(1),
+            participant_count: FieldValue.increment(1)
+          }, { merge: true });
         } else {
-          transaction.update(participantRef, { reaction_count: FieldValue.increment(1) });
+          const wasReactor = (participantSnap.data().reaction_count || 0) > 0;
+          transaction.update(participantRef, {
+            reaction_count: FieldValue.increment(1)
+          });
+          // Only increment participant_count (reactors) on their FIRST reaction
+          if (!wasReactor) {
+            transaction.set(sessionRef, {
+              participant_count: FieldValue.increment(1)
+            }, { merge: true });
+          }
         }
       }
     });
 
-    response.status(200).send("Reaction recorded.");
+    response.status(200).send('Reaction recorded.');
   } catch (error) {
-    logger.error("Transaction failed:", error);
-    response.status(500).send("Error writing to database.");
+    logger.error('Transaction failed:', error);
+    response.status(500).send('Error writing to database.');
   }
 });
 
+// --- SEND MESSAGE (individual) ---
 exports.sendMessage = onCall({ cors: true }, async (request) => {
   const { sessionId, userId, message, persistent } = request.data;
   if (!sessionId || !userId || !message) {
@@ -121,6 +182,7 @@ exports.sendMessage = onCall({ cors: true }, async (request) => {
   return { status: 'success' };
 });
 
+// --- SEND BROADCAST (all participants) ---
 exports.sendBroadcast = onCall({ cors: true }, async (request) => {
   const { sessionId, message, persistent } = request.data;
   if (!sessionId || !message) {
@@ -137,19 +199,23 @@ exports.sendBroadcast = onCall({ cors: true }, async (request) => {
     const msgRef = db.collection('sessions').doc(sessionId)
       .collection('participants').doc(doc.id)
       .collection('messages').doc();
-    batch.set(msgRef, { message, persistent: persistent === true, timestamp: FieldValue.serverTimestamp() });
+    batch.set(msgRef, {
+      message,
+      persistent: persistent === true,
+      timestamp: FieldValue.serverTimestamp()
+    });
   });
   await batch.commit();
 
-  logger.info(`Broadcast sent to ${participantsSnap.size} participants in session ${sessionId}`);
+  logger.info(`Broadcast sent to ${participantsSnap.size} in session ${sessionId}`);
   return { status: 'success', sent: participantsSnap.size };
 });
 
+// --- RESET SESSION ---
 exports.resetSession = onCall({ cors: true }, async (request) => {
   const { sessionId } = request.data;
-  if (!sessionId) {
-    throw new HttpsError('invalid-argument', 'sessionId is required.');
-  }
+  if (!sessionId) throw new HttpsError('invalid-argument', 'sessionId is required.');
+
   const db = getFirestore();
   const sessionRef = db.collection('sessions').doc(sessionId);
 
@@ -161,8 +227,8 @@ exports.resetSession = onCall({ cors: true }, async (request) => {
     await deleteCollection(pDoc.ref.collection('messages'));
     await pDoc.ref.delete();
   }
-
   await sessionRef.delete();
+
   logger.info(`Reset session: ${sessionId}`);
   return { status: 'success' };
 });
@@ -173,7 +239,5 @@ async function deleteCollection(collectionRef, batchSize = 100) {
   const batch = collectionRef.firestore.batch();
   snapshot.docs.forEach(doc => batch.delete(doc.ref));
   await batch.commit();
-  if (snapshot.size === batchSize) {
-    await deleteCollection(collectionRef, batchSize);
-  }
+  if (snapshot.size === batchSize) await deleteCollection(collectionRef, batchSize);
 }

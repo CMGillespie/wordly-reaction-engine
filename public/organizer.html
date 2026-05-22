@@ -189,7 +189,9 @@
         <div class="summary-bar">
             <div class="summary-stat"><div class="num" id="stat-total">0</div><div class="label">Total Reactions</div></div>
             <div class="summary-divider"></div>
-            <div class="summary-stat"><div class="num" id="stat-participants">0</div><div class="label">Participants</div></div>
+            <div class="summary-stat"><div class="num" id="stat-attendees">0</div><div class="label">Attendees</div></div>
+            <div class="summary-stat"><div class="num" id="stat-participants">0</div><div class="label">Reactors</div></div>
+            <div class="summary-stat"><div class="num" id="stat-engagement">—</div><div class="label">Engagement</div></div>
             <div class="summary-divider"></div>
             <div class="summary-stat"><div class="num" id="stat-thumbsup">0</div><div class="label">👍</div></div>
             <div class="summary-stat"><div class="num" id="stat-thumbsdown">0</div><div class="label">👎</div></div>
@@ -288,10 +290,21 @@
       updateSummary(utteranceData);
     });
 
-    // Participant count
+    // Session stats — attendees, reactors, engagement %
     onSnapshot(sessionRef, (d) => {
-      const count = d.exists() ? (d.data().participant_count || 0) : 0;
-      document.getElementById('stat-participants').textContent = count;
+      const data = d.exists() ? d.data() : {};
+      const attendees = data.attendee_count || 0;
+      const reactors = data.participant_count || 0;
+      document.getElementById('stat-attendees').textContent = attendees;
+      document.getElementById('stat-participants').textContent = reactors;
+      const engagementEl = document.getElementById('stat-engagement');
+      if (attendees > 0) {
+        const pct = Math.round((reactors / attendees) * 100);
+        engagementEl.textContent = `${pct}%`;
+        engagementEl.style.color = pct >= 50 ? '#2ecc71' : pct >= 25 ? '#f39c12' : 'inherit';
+      } else {
+        engagementEl.textContent = '—';
+      }
     });
 
     // Leaderboard
@@ -473,19 +486,53 @@
       return ta - tb;
     });
 
-    const rows = [['#', 'Time', 'Utterance', '👍', '👎', '❤️', '🤔', '❓', 'Total']];
+    // Pull live stats from the DOM
+    const attendees = parseInt(document.getElementById('stat-attendees').textContent) || 0;
+    const reactors  = parseInt(document.getElementById('stat-participants').textContent) || 0;
+    const engagementPct = attendees > 0 ? Math.round((reactors / attendees) * 100) : 0;
+
+    // Reaction frequency buckets from leaderboard participants
+    // We use the utterance data to approximate — pull reaction counts per participant
+    // from the live leaderboard items in the DOM
+    const lbItems = document.querySelectorAll('.leaderboard-item .lb-count');
+    const reactionCounts = Array.from(lbItems).map(el => parseInt(el.textContent) || 0);
+    const bucket1 = reactionCounts.filter(c => c >= 1 && c <= 4).length;
+    const bucket2 = reactionCounts.filter(c => c >= 5 && c <= 9).length;
+    const bucket3 = reactionCounts.filter(c => c >= 10).length;
+    const totalInLeaderboard = reactionCounts.length;
+
+    const pct = (n) => totalInLeaderboard > 0 ? `${Math.round((n/totalInLeaderboard)*100)}%` : '—';
+
+    // Build CSV — summary header first, then blank row, then utterance data
+    const rows = [];
+    rows.push([`Session Report: ${sid}`]);
+    rows.push([`Exported: ${new Date().toLocaleString()}`]);
+    rows.push([]);
+    rows.push(['SESSION SUMMARY']);
+    rows.push(['Total Attendees', attendees]);
+    rows.push(['Total Reactors', reactors]);
+    rows.push([`Engagement Rate`, `${engagementPct}%`]);
+    rows.push([]);
+    rows.push(['REACTION FREQUENCY (top 10 leaderboard)']);
+    rows.push(['Reacted 1-4 times',  bucket1, pct(bucket1)]);
+    rows.push(['Reacted 5-9 times',  bucket2, pct(bucket2)]);
+    rows.push(['Reacted 10+ times',  bucket3, pct(bucket3)]);
+    rows.push([]);
+    rows.push(['UTTERANCE DETAIL (reacted utterances only)']);
+    rows.push(['#', 'Time', 'Utterance', '👍', '👎', '❤️', '🤔', '❓', 'Total']);
+
     items.forEach((u, idx) => {
       const total = totalReactions(u);
-      if (total === 0) return; // only export utterances that got reactions
+      if (total === 0) return;
       rows.push([
         idx + 1,
         formatTime(u.first_seen_at),
         `"${(u.text || '').replace(/"/g, '""')}"`,
-        u.reaction_thumbs_up || 0,
+        u.reaction_thumbs_up   || 0,
         u.reaction_thumbs_down || 0,
-        u.reaction_heart || 0,
-        u.reaction_thinking || 0,
-        u.reaction_question || 0,
+        u.reaction_heart       || 0,
+        u.reaction_thinking    || 0,
+        u.reaction_question    || 0,
         total
       ]);
     });

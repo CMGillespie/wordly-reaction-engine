@@ -62,6 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const rtlLanguages = ['ar', 'he', 'fa', 'ur', 'dv', 'ps', 'yi'];
   const HEADER_AUTO_COLLAPSE_DELAY = 10000;
   const ADD_REACTION_URL = 'https://addreaction-kkcretsy3a-uc.a.run.app';
+  const REGISTER_ATTENDEE_URL = 'https://registerattendee-kkcretsy3a-uc.a.run.app';
 
   // --- v18: BACKGROUND PERSISTENCE ---
   const silentAudio = new Audio();
@@ -214,7 +215,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const message = JSON.parse(event.data);
       switch (message.type) {
         case 'status':
-          if (message.success) { updateStatus('connected'); if (state.audioEnabled) sendVoiceRequest(true); }
+          if (message.success) { updateStatus('connected'); if (state.audioEnabled) sendVoiceRequest(true); registerAttendee(); }
           else { updateStatus('error'); }
           break;
         case 'phrase': handlePhrase(message); break;
@@ -300,6 +301,22 @@ document.addEventListener('DOMContentLoaded', () => {
       hint.style.opacity = '1';
       hint.style.filter = 'none';
       hint.style.fontSize = '0.85em';
+    }
+  }
+
+  // --- v22: ATTENDEE REGISTRATION ---
+  // Called on successful WebSocket connect — registers presence regardless of reactions
+  async function registerAttendee() {
+    if (!state.sessionId) return;
+    const anonymousId = getOrCreateAnonymousId();
+    try {
+      await fetch(REGISTER_ATTENDEE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: state.sessionId, anonymous_id: anonymousId })
+      });
+    } catch (e) {
+      console.warn('Attendee registration failed (non-critical):', e);
     }
   }
 
