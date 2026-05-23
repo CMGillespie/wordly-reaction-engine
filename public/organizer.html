@@ -402,7 +402,8 @@
       const text = document.getElementById('engaged-msg-text').value.trim();
       if (!text) return;
       const msgType = document.querySelector('input[name="engaged-msg-type"]:checked').value;
-      const link = document.getElementById('engaged-msg-link').value.trim();
+      const rawLink = document.getElementById('engaged-msg-link').value.trim();
+      const link = rawLink && !rawLink.startsWith('http://') && !rawLink.startsWith('https://') ? 'https://' + rawLink : rawLink;
       const payload = {
         sessionId: sid, userId: selectedUserId, message: text,
         persistent: msgType === 'message'
@@ -425,7 +426,8 @@
       const text = document.getElementById('engaged-msg-text').value.trim();
       if (!text) { alert('Enter a message first.'); return; }
       const msgType = document.querySelector('input[name="engaged-msg-type"]:checked').value;
-      const link = document.getElementById('engaged-msg-link').value.trim();
+      const rawLink = document.getElementById('engaged-msg-link').value.trim();
+      const link = rawLink && !rawLink.startsWith('http://') && !rawLink.startsWith('https://') ? 'https://' + rawLink : rawLink;
       const payload = {
         sessionId: sid, message: text,
         persistent: msgType === 'message',
@@ -448,7 +450,8 @@
       const text = document.getElementById('all-msg-text').value.trim();
       if (!text) { alert('Enter a message first.'); return; }
       const msgType = document.querySelector('input[name="all-msg-type"]:checked').value;
-      const link = document.getElementById('all-msg-link').value.trim();
+      const rawLink = document.getElementById('all-msg-link').value.trim();
+      const link = rawLink && !rawLink.startsWith('http://') && !rawLink.startsWith('https://') ? 'https://' + rawLink : rawLink;
       const payload = {
         sessionId: sid, message: text,
         persistent: msgType === 'message',
