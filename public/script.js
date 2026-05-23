@@ -423,7 +423,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (change.type === 'added') {
               const data = change.doc.data();
               if (data.persistent) {
-                showPersistentNotification(data.message);
+                showPersistentNotification(data.message, data.link || null);
               } else {
                 showNotification(data.message, 'info', 8000);
               }
@@ -534,7 +534,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Persistent notification — stays until user taps to dismiss
-  function showPersistentNotification(message) {
+  function showPersistentNotification(message, link) {
     const existing = document.querySelector('.notification-persistent');
     if (existing) existing.remove();
     const notification = document.createElement('div');
@@ -544,12 +544,31 @@ document.addEventListener('DOMContentLoaded', () => {
       background: #1a1a2e; color: white; padding: 14px 20px 14px 16px;
       border-radius: 10px; z-index: 9999; max-width: 88vw;
       box-shadow: 0 4px 20px rgba(0,0,0,0.3); font-size: 0.95em;
-      display: flex; align-items: flex-start; gap: 12px; cursor: pointer;
+      display: flex; flex-direction: column; gap: 8px; cursor: pointer;
     `;
-    notification.innerHTML = `
+    const topRow = document.createElement('div');
+    topRow.style.cssText = 'display:flex; align-items:flex-start; gap:12px;';
+    topRow.innerHTML = `
       <span style="flex:1; line-height:1.4;">${message}</span>
       <span style="opacity:0.6; font-size:1.2em; flex-shrink:0; margin-top:-1px;">✕</span>
     `;
+    notification.appendChild(topRow);
+
+    if (link) {
+      const linkEl = document.createElement('a');
+      linkEl.href = link;
+      linkEl.target = '_blank';
+      linkEl.rel = 'noopener noreferrer';
+      linkEl.textContent = link.length > 40 ? link.substring(0, 40) + '…' : link;
+      linkEl.style.cssText = `
+        color: #7ec8e3; font-size: 0.85em; word-break: break-all;
+        text-decoration: underline; padding: 6px 10px;
+        background: rgba(255,255,255,0.1); border-radius: 6px; display: block;
+      `;
+      linkEl.addEventListener('click', (e) => e.stopPropagation());
+      notification.appendChild(linkEl);
+    }
+
     notification.addEventListener('click', () => notification.remove());
     document.body.appendChild(notification);
   }

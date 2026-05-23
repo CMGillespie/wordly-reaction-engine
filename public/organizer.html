@@ -104,30 +104,43 @@
         .lb-send-btn:hover { background: #dde4ff; }
 
         /* Message composer */
-        .msg-composer { padding: 16px; flex-shrink: 0; }
+        .msg-composer { padding: 16px; flex-shrink: 0; border-bottom: 1px solid #eee; }
         .msg-composer h2 { font-size: 0.9em; text-transform: uppercase; letter-spacing: 0.5px; color: #888; margin-bottom: 10px; }
-        .msg-type-toggle { display: flex; gap: 16px; margin-bottom: 10px; font-size: 0.85em; }
+        .msg-type-toggle { display: flex; gap: 16px; margin-bottom: 8px; font-size: 0.85em; }
         .msg-type-toggle label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
         .msg-target { font-size: 0.8em; color: #888; margin-bottom: 8px; min-height: 18px; }
         .msg-target span { color: #1a1a2e; font-weight: 600; }
-        #msg-text {
+        .msg-textarea {
             width: 100%; padding: 8px 10px; border: 1px solid #dde; border-radius: 5px;
-            font-size: 0.88em; resize: vertical; min-height: 60px; margin-bottom: 8px;
+            font-size: 0.88em; resize: vertical; min-height: 55px; margin-bottom: 6px;
             font-family: inherit;
         }
+        .msg-link-field {
+            width: 100%; padding: 7px 10px; border: 1px solid #dde; border-radius: 5px;
+            font-size: 0.82em; margin-bottom: 8px; font-family: inherit;
+            display: none;
+        }
+        .msg-link-field.visible { display: block; }
         .msg-actions { display: flex; gap: 8px; }
-        #send-msg-btn {
+        .msg-send-btn {
             flex: 1; padding: 8px; background: #1a1a2e; color: white; border: none;
-            border-radius: 5px; cursor: pointer; font-size: 0.85em; font-weight: 600;
+            border-radius: 5px; cursor: pointer; font-size: 0.82em; font-weight: 600;
         }
-        #send-msg-btn:hover { background: #2c2c4e; }
-        #send-msg-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        #broadcast-btn {
+        .msg-send-btn:hover { background: #2c2c4e; }
+        .msg-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .msg-broadcast-btn {
             flex: 1; padding: 8px; background: #e67e22; color: white; border: none;
-            border-radius: 5px; cursor: pointer; font-size: 0.85em; font-weight: 600;
+            border-radius: 5px; cursor: pointer; font-size: 0.82em; font-weight: 600;
         }
-        #broadcast-btn:hover { background: #d35400; }
-        #broadcast-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .msg-broadcast-btn:hover { background: #d35400; }
+        .msg-broadcast-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .msg-broadcast-all-btn {
+            width: 100%; padding: 8px; background: #8e44ad; color: white; border: none;
+            border-radius: 5px; cursor: pointer; font-size: 0.82em; font-weight: 600;
+            margin-top: 4px;
+        }
+        .msg-broadcast-all-btn:hover { background: #7d3c98; }
+        .msg-broadcast-all-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
         /* Reset */
         .danger-zone { padding: 12px 16px; margin-top: auto; border-top: 1px solid #eee; }
@@ -214,18 +227,32 @@
             <div id="leaderboard"><div class="empty-state">No participants yet.</div></div>
         </div>
 
+        <!-- Send to Engaged Users -->
         <div class="msg-composer">
-            <h2>Send to User</h2>
+            <h2>Send to Engaged Users</h2>
             <div class="msg-type-toggle">
-                <label><input type="radio" name="msg-type" value="note" checked> Send Note <small style="color:#aaa">(fades)</small></label>
-                <label><input type="radio" name="msg-type" value="message"> Send Message <small style="color:#aaa">(dismiss)</small></label>
+                <label><input type="radio" name="engaged-msg-type" value="note" checked> Note <small style="color:#aaa">(fades)</small></label>
+                <label><input type="radio" name="engaged-msg-type" value="message"> Message <small style="color:#aaa">(dismiss)</small></label>
             </div>
             <div class="msg-target" id="msg-target">Select a user from the leaderboard</div>
-            <textarea id="msg-text" placeholder="Type your message..."></textarea>
+            <textarea id="engaged-msg-text" class="msg-textarea" placeholder="Type your message..."></textarea>
+            <input type="url" id="engaged-msg-link" class="msg-link-field" placeholder="https:// (optional link)">
             <div class="msg-actions">
-                <button id="send-msg-btn" disabled>Send to User</button>
-                <button id="broadcast-btn">📢 Broadcast</button>
+                <button id="send-msg-btn" class="msg-send-btn" disabled>Send to User</button>
+                <button id="broadcast-engaged-btn" class="msg-broadcast-btn">📢 Send Engaged</button>
             </div>
+        </div>
+
+        <!-- Send to All Attendees -->
+        <div class="msg-composer">
+            <h2>Send to All Attendees</h2>
+            <div class="msg-type-toggle">
+                <label><input type="radio" name="all-msg-type" value="note" checked> Note <small style="color:#aaa">(fades)</small></label>
+                <label><input type="radio" name="all-msg-type" value="message"> Message <small style="color:#aaa">(dismiss)</small></label>
+            </div>
+            <textarea id="all-msg-text" class="msg-textarea" placeholder="Type your message..."></textarea>
+            <input type="url" id="all-msg-link" class="msg-link-field" placeholder="https:// (optional link)">
+            <button id="broadcast-all-btn" class="msg-broadcast-all-btn">📢 Send to All Attendees</button>
         </div>
 
         <div class="danger-zone">
@@ -338,7 +365,6 @@
       selectedUserId = btn.dataset.id;
       document.getElementById('msg-target').innerHTML = `Sending to: <span>${selectedUserId.substring(5, 16)}…</span>`;
       document.getElementById('send-msg-btn').disabled = false;
-      // Re-render to show selection state
       document.querySelectorAll('.lb-send-btn').forEach(b => {
         b.textContent = b.dataset.id === selectedUserId ? '✓ Selected' : 'Select';
         b.style.fontWeight = b.dataset.id === selectedUserId ? '700' : '';
@@ -346,40 +372,95 @@
       });
     });
 
-    // Send to individual
+    // Link field show/hide based on Note vs Message selection
+    function setupLinkToggle(radioName, linkFieldId) {
+      document.querySelectorAll(`input[name="${radioName}"]`).forEach(radio => {
+        radio.addEventListener('change', () => {
+          const linkField = document.getElementById(linkFieldId);
+          const isMessage = document.querySelector(`input[name="${radioName}"]:checked`).value === 'message';
+          linkField.classList.toggle('visible', isMessage);
+          if (!isMessage) linkField.value = '';
+        });
+      });
+    }
+    setupLinkToggle('engaged-msg-type', 'engaged-msg-link');
+    setupLinkToggle('all-msg-type', 'all-msg-link');
+
+    // Helper to reset a composer panel
+    function resetComposer(textId, linkId, radioName, btnEl, defaultLabel) {
+      document.getElementById(textId).value = '';
+      document.getElementById(linkId).value = '';
+      document.getElementById(linkId).classList.remove('visible');
+      document.querySelector(`input[name="${radioName}"][value="note"]`).checked = true;
+      btnEl.textContent = defaultLabel;
+      btnEl.disabled = false;
+    }
+
+    // Send to individual (engaged only)
     document.getElementById('send-msg-btn').addEventListener('click', async () => {
       if (!selectedUserId) return;
-      const text = document.getElementById('msg-text').value.trim();
+      const text = document.getElementById('engaged-msg-text').value.trim();
       if (!text) return;
-      const msgType = document.querySelector('input[name="msg-type"]:checked').value;
-      const payload = { sessionId: sid, userId: selectedUserId, message: text, persistent: msgType === 'message' };
+      const msgType = document.querySelector('input[name="engaged-msg-type"]:checked').value;
+      const link = document.getElementById('engaged-msg-link').value.trim();
+      const payload = {
+        sessionId: sid, userId: selectedUserId, message: text,
+        persistent: msgType === 'message'
+      };
+      if (link) payload.link = link;
       const btn = document.getElementById('send-msg-btn');
       btn.disabled = true; btn.textContent = 'Sending…';
       try {
         await httpsCallable(functions, 'sendMessage')(payload);
         btn.textContent = 'Sent ✓';
-        document.getElementById('msg-text').value = '';
-        document.querySelector('input[name="msg-type"][value="note"]').checked = true;
-        setTimeout(() => { btn.textContent = 'Send to User'; btn.disabled = false; }, 2000);
+        setTimeout(() => resetComposer('engaged-msg-text', 'engaged-msg-link', 'engaged-msg-type', btn, 'Send to User'), 2000);
+        btn.disabled = false;
       } catch (err) {
         console.error(err); btn.textContent = 'Error'; btn.disabled = false;
       }
     });
 
-    // Broadcast
-    document.getElementById('broadcast-btn').addEventListener('click', async () => {
-      const text = document.getElementById('msg-text').value.trim();
+    // Broadcast to engaged users only
+    document.getElementById('broadcast-engaged-btn').addEventListener('click', async () => {
+      const text = document.getElementById('engaged-msg-text').value.trim();
       if (!text) { alert('Enter a message first.'); return; }
-      const msgType = document.querySelector('input[name="msg-type"]:checked').value;
-      const payload = { sessionId: sid, message: text, persistent: msgType === 'message' };
-      const btn = document.getElementById('broadcast-btn');
+      const msgType = document.querySelector('input[name="engaged-msg-type"]:checked').value;
+      const link = document.getElementById('engaged-msg-link').value.trim();
+      const payload = {
+        sessionId: sid, message: text,
+        persistent: msgType === 'message',
+        engagedOnly: true
+      };
+      if (link) payload.link = link;
+      const btn = document.getElementById('broadcast-engaged-btn');
       btn.disabled = true; btn.textContent = 'Sending…';
       try {
         const result = await httpsCallable(functions, 'sendBroadcast')(payload);
         btn.textContent = `Sent to ${result.data.sent} ✓`;
-        document.getElementById('msg-text').value = '';
-        document.querySelector('input[name="msg-type"][value="note"]').checked = true;
-        setTimeout(() => { btn.textContent = '📢 Broadcast'; btn.disabled = false; }, 3000);
+        setTimeout(() => resetComposer('engaged-msg-text', 'engaged-msg-link', 'engaged-msg-type', btn, '📢 Send Engaged'), 3000);
+      } catch (err) {
+        console.error(err); btn.textContent = 'Error'; btn.disabled = false;
+      }
+    });
+
+    // Broadcast to ALL attendees
+    document.getElementById('broadcast-all-btn').addEventListener('click', async () => {
+      const text = document.getElementById('all-msg-text').value.trim();
+      if (!text) { alert('Enter a message first.'); return; }
+      const msgType = document.querySelector('input[name="all-msg-type"]:checked').value;
+      const link = document.getElementById('all-msg-link').value.trim();
+      const payload = {
+        sessionId: sid, message: text,
+        persistent: msgType === 'message',
+        engagedOnly: false
+      };
+      if (link) payload.link = link;
+      const btn = document.getElementById('broadcast-all-btn');
+      btn.disabled = true; btn.textContent = 'Sending…';
+      try {
+        const result = await httpsCallable(functions, 'sendBroadcast')(payload);
+        btn.textContent = `Sent to ${result.data.sent} ✓`;
+        setTimeout(() => resetComposer('all-msg-text', 'all-msg-link', 'all-msg-type', btn, '📢 Send to All Attendees'), 3000);
       } catch (err) {
         console.error(err); btn.textContent = 'Error'; btn.disabled = false;
       }

@@ -166,49 +166,61 @@ exports.addReaction = onRequest(async (request, response) => {
 
 // --- SEND MESSAGE (individual) ---
 exports.sendMessage = onCall({ cors: true }, async (request) => {
-  const { sessionId, userId, message, persistent } = request.data;
+  const { sessionId, userId, message, persistent, link } = request.data;
   if (!sessionId || !userId || !message) {
     throw new HttpsError('invalid-argument', 'sessionId, userId, and message are required.');
   }
   const db = getFirestore();
+  const msgData = {
+    message,
+    persistent: persistent === true,
+    timestamp: FieldValue.serverTimestamp()
+  };
+  if (link) msgData.link = link;
   await db.collection('sessions').doc(sessionId)
     .collection('participants').doc(userId)
-    .collection('messages').add({
-      message,
-      persistent: persistent === true,
-      timestamp: FieldValue.serverTimestamp()
-    });
+    .collection('messages').add(msgData);
   logger.info(`Message sent to ${userId} in session ${sessionId}`);
   return { status: 'success' };
 });
 
-// --- SEND BROADCAST (all participants) ---
+// --- SEND BROADCAST ---
+// engagedOnly: true = only reactors (reaction_count > 0), false = all registered attendees
 exports.sendBroadcast = onCall({ cors: true }, async (request) => {
-  const { sessionId, message, persistent } = request.data;
+  const { sessionId, message, persistent, engagedOnly, link } = request.data;
   if (!sessionId || !message) {
     throw new HttpsError('invalid-argument', 'sessionId and message are required.');
   }
   const db = getFirestore();
-  const participantsSnap = await db.collection('sessions').doc(sessionId)
+  let participantsSnap = await db.collection('sessions').doc(sessionId)
     .collection('participants').get();
 
   if (participantsSnap.empty) return { status: 'success', sent: 0 };
 
+  const docs = engagedOnly
+    ? participantsSnap.docs.filter(d => (d.data().reaction_count || 0) > 0)
+    : participantsSnap.docs;
+
+  if (docs.length === 0) return { status: 'success', sent: 0 };
+
+  const msgData = {
+    message,
+    persistent: persistent === true,
+    timestamp: FieldValue.serverTimestamp()
+  };
+  if (link) msgData.link = link;
+
   const batch = db.batch();
-  participantsSnap.docs.forEach(doc => {
+  docs.forEach(doc => {
     const msgRef = db.collection('sessions').doc(sessionId)
       .collection('participants').doc(doc.id)
       .collection('messages').doc();
-    batch.set(msgRef, {
-      message,
-      persistent: persistent === true,
-      timestamp: FieldValue.serverTimestamp()
-    });
+    batch.set(msgRef, msgData);
   });
   await batch.commit();
 
-  logger.info(`Broadcast sent to ${participantsSnap.size} in session ${sessionId}`);
-  return { status: 'success', sent: participantsSnap.size };
+  logger.info(`Broadcast sent to ${docs.length} participants (engagedOnly=${engagedOnly}) in session ${sessionId}`);
+  return { status: 'success', sent: docs.length };
 });
 
 // --- RESET SESSION ---
