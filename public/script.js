@@ -45,6 +45,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // v21: track last speaker for >> change indicator
   let lastSpeakerId = null;
   let lastSpeakerTag = null;
+  // v24: live reaction listeners
+  let showLiveReactions = false;
+  let sessionFlagListener = null;
+  const utteranceListeners = {};
+  const MAX_UTTERANCE_LISTENERS = 20;
 
   // --- Application State ---
   const state = {
@@ -155,6 +160,7 @@ document.addEventListener('DOMContentLoaded', () => {
     startSilentAudio();
     setupMediaSession();
     setupMessageListener();
+    setupLiveReactionsListener();
     resetHeaderCollapseTimer();
     connectWebSocket();
   }
@@ -171,6 +177,12 @@ document.addEventListener('DOMContentLoaded', () => {
       messageListenerUnsubscribe();
       messageListenerUnsubscribe = null;
     }
+    if (sessionFlagListener) {
+      sessionFlagListener();
+      sessionFlagListener = null;
+    }
+    teardownAllUtteranceListeners();
+    showLiveReactions = false;
     appPage.style.display = 'none';
     configInputArea.style.display = 'block';
     updateStatus('disconnected');
@@ -284,6 +296,8 @@ document.addEventListener('DOMContentLoaded', () => {
         newMessageCountSpan.textContent = `(${state.newMessagesWhileScrolled})`;
         scrollToBottomBtn.style.display = 'flex';
       }
+      // v24: attach live reaction listener for this utterance if enabled
+      attachUtteranceListener(message.phraseId, phraseElement);
     }
   }
 
@@ -291,12 +305,22 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateBubbleReactionDisplay(phraseId) {
     const phraseElement = document.getElementById(`phrase-${phraseId}`);
     if (!phraseElement) return;
+
+    // If live reactions are on, renderReactionBar handles the display
+    // Just ensure the mine chips are styled correctly next render
+    if (showLiveReactions) {
+      const bar = phraseElement.querySelector('.phrase-reaction-bar');
+      if (bar) {
+        // Re-render will happen via Firestore listener — nothing to do here
+        return;
+      }
+    }
+
     const hint = phraseElement.querySelector('.reaction-hint');
     if (!hint) return;
 
     const myReactionsForThis = state.myReactions[phraseId];
     if (myReactionsForThis && myReactionsForThis.size > 0) {
-      // Show their chosen emojis, full opacity, no greyscale
       hint.textContent = Array.from(myReactionsForThis).join(' ');
       hint.style.opacity = '1';
       hint.style.filter = 'none';
@@ -437,7 +461,115 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => clearInterval(waitForFirebase), 10000);
   }
 
-  // --- AUDIO ---
+  // --- v24: LIVE REACTIONS ---
+
+  function setupLiveReactionsListener() {
+    // Watch the session doc for the show_reactions flag
+    const waitForFirebase = setInterval(() => {
+      if (window.appDb && window.firestore && window.firestore.doc) {
+        clearInterval(waitForFirebase);
+        const sessionRef = window.firestore.doc(window.appDb, 'sessions', state.sessionId);
+        sessionFlagListener = window.firestore.onSnapshot(sessionRef, (snap) => {
+          if (!snap.exists()) return;
+          const newVal = snap.data().show_reactions === true;
+          if (newVal !== showLiveReactions) {
+            showLiveReactions = newVal;
+            if (!showLiveReactions) {
+              // Turned off — remove all reaction bars
+              teardownAllUtteranceListeners();
+              document.querySelectorAll('.phrase-reaction-bar').forEach(el => el.remove());
+              document.querySelectorAll('.reaction-hint').forEach(el => { el.style.display = ''; });
+            } else {
+              // Turned on — attach listeners to existing phrases
+              document.querySelectorAll('.phrase[id^="phrase-"]').forEach(el => {
+                const phraseId = el.id.replace('phrase-', '');
+                attachUtteranceListener(phraseId, el);
+              });
+            }
+          }
+        });
+      }
+    }, 200);
+    setTimeout(() => clearInterval(waitForFirebase), 10000);
+  }
+
+  function attachUtteranceListener(phraseId, phraseEl) {
+    if (!showLiveReactions) return;
+    if (utteranceListeners[phraseId]) return; // already listening
+    if (!window.appDb || !window.firestore || !window.firestore.doc) return;
+
+    const utteranceRef = window.firestore.doc(
+      window.appDb, 'sessions', state.sessionId, 'utterances', phraseId
+    );
+
+    const unsub = window.firestore.onSnapshot(utteranceRef, (snap) => {
+      if (!snap.exists()) return;
+      renderReactionBar(phraseId, snap.data());
+    });
+
+    utteranceListeners[phraseId] = unsub;
+
+    // Enforce max listeners — remove oldest if over limit
+    const ids = Object.keys(utteranceListeners);
+    if (ids.length > MAX_UTTERANCE_LISTENERS) {
+      const oldest = ids[0];
+      utteranceListeners[oldest]();
+      delete utteranceListeners[oldest];
+    }
+  }
+
+  function teardownAllUtteranceListeners() {
+    Object.values(utteranceListeners).forEach(unsub => unsub());
+    Object.keys(utteranceListeners).forEach(k => delete utteranceListeners[k]);
+  }
+
+  function renderReactionBar(phraseId, data) {
+    const phraseEl = document.getElementById(`phrase-${phraseId}`);
+    if (!phraseEl) return;
+
+    const myReactionsForThis = state.myReactions[phraseId] || new Set();
+    const hint = phraseEl.querySelector('.reaction-hint');
+
+    const EMOJIS = [
+      { key: 'reaction_thumbs_up',   emoji: '👍' },
+      { key: 'reaction_thumbs_down', emoji: '👎' },
+      { key: 'reaction_heart',       emoji: '❤️' },
+      { key: 'reaction_thinking',    emoji: '🤔' },
+      { key: 'reaction_question',    emoji: '❓' },
+    ];
+
+    const hasAnyReactions = EMOJIS.some(e => (data[e.key] || 0) > 0);
+
+    // Remove old bar
+    const existingBar = phraseEl.querySelector('.phrase-reaction-bar');
+    if (existingBar) existingBar.remove();
+
+    if (!hasAnyReactions) {
+      // No reactions — show hint
+      if (hint) hint.style.display = '';
+      return;
+    }
+
+    // Has reactions — hide hint, show chips
+    if (hint) hint.style.display = 'none';
+
+    const bar = document.createElement('div');
+    bar.className = 'phrase-reaction-bar';
+
+    EMOJIS.forEach(({ key, emoji }) => {
+      const count = data[key] || 0;
+      if (count === 0) return;
+      const isMine = myReactionsForThis.has(emoji);
+      const chip = document.createElement('span');
+      chip.className = `reaction-live-chip${isMine ? ' mine' : ''}`;
+      chip.innerHTML = `${emoji}<span class="chip-count">${count}</span>`;
+      bar.appendChild(chip);
+    });
+
+    phraseEl.appendChild(bar);
+  }
+
+  // END v24
   function processAudioQueue() {
     if (state.isPlayingAudio || !state.audioEnabled || state.audioQueue.length === 0) return;
     state.isPlayingAudio = true;

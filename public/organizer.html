@@ -212,6 +212,7 @@
             <div class="summary-stat"><div class="num" id="stat-thinking">0</div><div class="label">🤔</div></div>
             <div class="summary-stat"><div class="num" id="stat-question">0</div><div class="label">❓</div></div>
             <button class="export-btn" id="export-csv-btn">⬇ Export CSV</button>
+            <button class="export-btn" id="live-reactions-toggle" style="background:#555;" title="Toggle live reaction counts visible to attendees">👁 Live Reactions: OFF</button>
         </div>
 
         <!-- Utterance list -->
@@ -263,7 +264,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, query, orderBy, onSnapshot, doc, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, query, orderBy, onSnapshot, doc, limit, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
   const firebaseConfig = {
@@ -471,6 +472,38 @@
 
     // CSV Export
     document.getElementById('export-csv-btn').addEventListener('click', () => exportCSV(utteranceData, sid));
+
+    // Live reactions toggle — writes show_reactions flag to session doc
+    let showReactionsEnabled = false;
+    const toggleBtn = document.getElementById('live-reactions-toggle');
+
+    // Read initial state
+    onSnapshot(sessionRef, (d) => {
+      if (d.exists()) {
+        const val = d.data().show_reactions === true;
+        if (val !== showReactionsEnabled) {
+          showReactionsEnabled = val;
+          updateToggleBtn();
+        }
+      }
+    });
+
+    function updateToggleBtn() {
+      toggleBtn.textContent = `👁 Live Reactions: ${showReactionsEnabled ? 'ON' : 'OFF'}`;
+      toggleBtn.style.background = showReactionsEnabled ? '#2ecc71' : '#555';
+    }
+
+    toggleBtn.addEventListener('click', async () => {
+      showReactionsEnabled = !showReactionsEnabled;
+      updateToggleBtn();
+      try {
+        await setDoc(sessionRef, { show_reactions: showReactionsEnabled }, { merge: true });
+      } catch (err) {
+        console.error('Error updating show_reactions:', err);
+        showReactionsEnabled = !showReactionsEnabled; // revert on error
+        updateToggleBtn();
+      }
+    });
 
     // Reset
     document.getElementById('reset-session-btn').addEventListener('click', async () => {

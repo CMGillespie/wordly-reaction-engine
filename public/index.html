@@ -138,13 +138,13 @@
     };
 
     const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js");
-    const { getFirestore, collection, onSnapshot } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
+    const { getFirestore, collection, onSnapshot, doc } = await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js");
 
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
 
     window.appDb = db;
-    window.firestore = { collection, onSnapshot };
+    window.firestore = { collection, onSnapshot, doc };
   </script>
 
   <script src="script.js"></script>
