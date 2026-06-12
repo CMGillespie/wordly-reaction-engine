@@ -161,7 +161,6 @@ document.addEventListener('DOMContentLoaded', () => {
     populateLanguageSelect(languageSelect, 'en');
     startSilentAudio();
     setupMediaSession();
-    setupMessageListener();
     setupLiveReactionsListener();
     resetHeaderCollapseTimer();
     connectWebSocket();
@@ -348,6 +347,8 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {
       console.warn('Attendee registration failed (non-critical):', e);
     }
+    // Set up message listener now that we have activeEventId
+    setupMessageListener();
   }
 
   // --- REACTION ENGINE ---

@@ -416,8 +416,7 @@
       if (participantsUnsub) { participantsUnsub(); participantsUnsub = null; }
       if (sessionStatsUnsub) { sessionStatsUnsub(); sessionStatsUnsub = null; }
       utteranceData = {};
-      document.getElementById('utterance-list').innerHTML = '';
-      document.getElementById('empty-state') && (document.getElementById('empty-state').style.display = 'block');
+      document.getElementById('utterance-list').innerHTML = '<div class="empty-state" id="empty-state">No reactions recorded yet for this session.</div>';
 
       const eventRef = doc(db, 'sessions', sid, 'events', eventId);
 
@@ -685,8 +684,8 @@
       return ta - tb;
     });
 
-    if (items.length === 0) { empty.style.display = 'block'; return; }
-    empty.style.display = 'none';
+    if (items.length === 0) { if (empty) empty.style.display = 'block'; return; }
+    if (empty) empty.style.display = 'none';
 
     // Find max reactions for highlighting top reacted
     const maxReactions = Math.max(...items.map(totalReactions), 1);
