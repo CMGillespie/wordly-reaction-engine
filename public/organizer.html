@@ -152,6 +152,57 @@
 
         .empty-state { color: #aaa; font-size: 0.9em; padding: 20px 0; text-align: center; }
         .error-message { color: #e74c3c; font-weight: bold; }
+
+        /* --- EVENT SELECTOR --- */
+        .event-selector-wrap {
+            display: flex; align-items: center; gap: 8px; margin-left: auto;
+        }
+        .event-selector-wrap label { font-size: 0.75em; color: rgba(255,255,255,0.6); white-space: nowrap; }
+        #event-select {
+            background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25);
+            color: white; border-radius: 5px; padding: 5px 8px; font-size: 0.82em;
+            cursor: pointer; max-width: 200px;
+        }
+        #event-select option { background: #1a1a2e; color: white; }
+        #new-event-btn {
+            padding: 5px 12px; background: #2ecc71; color: white; border: none;
+            border-radius: 5px; cursor: pointer; font-size: 0.82em; font-weight: 600;
+            white-space: nowrap;
+        }
+        #new-event-btn:hover { background: #27ae60; }
+
+        /* --- NEW EVENT MODAL --- */
+        #new-event-modal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6); z-index: 1000;
+            align-items: center; justify-content: center;
+        }
+        #new-event-modal.visible { display: flex; }
+        .modal-box {
+            background: white; border-radius: 10px; padding: 28px 32px;
+            width: 420px; max-width: 95vw;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .modal-box h2 { font-size: 1.1em; color: #1a1a2e; margin-bottom: 6px; }
+        .modal-box p { font-size: 0.85em; color: #888; margin-bottom: 18px; line-height: 1.4; }
+        .modal-box label { font-size: 0.82em; color: #555; display: block; margin-bottom: 5px; font-weight: 600; }
+        .modal-box input[type="text"] {
+            width: 100%; padding: 10px 12px; border: 1px solid #dde; border-radius: 6px;
+            font-size: 0.95em; margin-bottom: 20px; font-family: inherit;
+        }
+        .modal-box input[type="text"]:focus { outline: none; border-color: #017CFF; box-shadow: 0 0 0 3px rgba(1,124,255,0.15); }
+        .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+        .modal-cancel-btn {
+            padding: 9px 18px; background: #f5f5f5; color: #555; border: none;
+            border-radius: 5px; cursor: pointer; font-size: 0.88em;
+        }
+        .modal-cancel-btn:hover { background: #eee; }
+        .modal-confirm-btn {
+            padding: 9px 20px; background: #017CFF; color: white; border: none;
+            border-radius: 5px; cursor: pointer; font-size: 0.88em; font-weight: 600;
+        }
+        .modal-confirm-btn:hover { background: #0062cc; }
+        .modal-confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -196,6 +247,11 @@
             </div>
             <h1>Reaction Console</h1>
             <div class="session-badge" id="session-badge">—</div>
+            <div class="event-selector-wrap">
+                <label for="event-select">Event:</label>
+                <select id="event-select"><option value="">Loading…</option></select>
+                <button id="new-event-btn">+ New Event</button>
+            </div>
         </div>
 
         <!-- Summary bar -->
@@ -257,14 +313,28 @@
         </div>
 
         <div class="danger-zone">
-            <button id="reset-session-btn">⚠ Reset Session Data</button>
+            <button id="reset-session-btn">⚠ Reset Current Event</button>
+        </div>
+    </div>
+</div>
+
+<!-- NEW EVENT MODAL -->
+<div id="new-event-modal">
+    <div class="modal-box">
+        <h2>Start New Event</h2>
+        <p>Current event data will be preserved and accessible from the Event dropdown. A fresh slate will begin immediately.</p>
+        <label for="new-event-name-input">Event Name</label>
+        <input type="text" id="new-event-name-input" placeholder="e.g. Infocomm Day 1 — Morning" maxlength="80">
+        <div class="modal-actions">
+            <button class="modal-cancel-btn" id="modal-cancel-btn">Cancel</button>
+            <button class="modal-confirm-btn" id="modal-confirm-btn">Start New Event</button>
         </div>
     </div>
 </div>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, query, orderBy, onSnapshot, doc, limit, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, query, orderBy, onSnapshot, doc, getDocs, limit, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
   const firebaseConfig = {
@@ -306,60 +376,184 @@
 
     const sessionRef = doc(db, 'sessions', sid);
 
-    // Live utterances — sorted by first_seen_at
+    // --- EVENT MANAGEMENT ---
+    let activeEventId = null;
+    let utteranceUnsub = null;
+    let participantsUnsub = null;
+    let sessionStatsUnsub = null;
     let utteranceData = {};
-    const utterancesQuery = query(collection(sessionRef, 'utterances'), orderBy('first_seen_at', 'asc'));
-    onSnapshot(utterancesQuery, (snap) => {
-      snap.forEach(d => { utteranceData[d.id] = { id: d.id, ...d.data() }; });
-      snap.docChanges().forEach(change => {
-        if (change.type === 'removed') delete utteranceData[change.doc.id];
+
+    // Load event list and populate dropdown
+    async function loadEventList() {
+      const eventsSnap = await getDocs(query(collection(sessionRef, 'events'), orderBy('created_at', 'asc')));
+      const select = document.getElementById('event-select');
+      select.innerHTML = '';
+      if (eventsSnap.empty) {
+        select.innerHTML = '<option value="">No events yet</option>';
+        return;
+      }
+      eventsSnap.forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.id;
+        opt.textContent = d.data().name || d.id;
+        select.appendChild(opt);
       });
-      renderUtterances(utteranceData);
-      updateSummary(utteranceData);
+      // Select the active event
+      const sessionSnap = await (await import("https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js")).getDoc(sessionRef);
+      const currentActive = sessionSnap.exists() ? sessionSnap.data().active_event : null;
+      if (currentActive) select.value = currentActive;
+      const selectedId = select.value || (eventsSnap.docs[eventsSnap.docs.length - 1]?.id);
+      if (selectedId) switchToEvent(selectedId);
+    }
+
+    // Switch listeners to a different event
+    function switchToEvent(eventId) {
+      if (activeEventId === eventId) return;
+      activeEventId = eventId;
+
+      // Teardown old listeners
+      if (utteranceUnsub) { utteranceUnsub(); utteranceUnsub = null; }
+      if (participantsUnsub) { participantsUnsub(); participantsUnsub = null; }
+      if (sessionStatsUnsub) { sessionStatsUnsub(); sessionStatsUnsub = null; }
+      utteranceData = {};
+      document.getElementById('utterance-list').innerHTML = '';
+      document.getElementById('empty-state') && (document.getElementById('empty-state').style.display = 'block');
+
+      const eventRef = doc(db, 'sessions', sid, 'events', eventId);
+
+      // Live utterances
+      const utterancesQuery = query(collection(eventRef, 'utterances'), orderBy('first_seen_at', 'asc'));
+      utteranceUnsub = onSnapshot(utterancesQuery, (snap) => {
+        snap.forEach(d => { utteranceData[d.id] = { id: d.id, ...d.data() }; });
+        snap.docChanges().forEach(change => {
+          if (change.type === 'removed') delete utteranceData[change.doc.id];
+        });
+        renderUtterances(utteranceData);
+        updateSummary(utteranceData);
+      });
+
+      // Event stats — attendees, reactors, engagement %
+      sessionStatsUnsub = onSnapshot(eventRef, (d) => {
+        const data = d.exists() ? d.data() : {};
+        const attendees = data.attendee_count || 0;
+        const reactors = data.participant_count || 0;
+        document.getElementById('stat-attendees').textContent = attendees;
+        document.getElementById('stat-participants').textContent = reactors;
+        const engagementEl = document.getElementById('stat-engagement');
+        if (attendees > 0) {
+          const pct = Math.round((reactors / attendees) * 100);
+          engagementEl.textContent = `${pct}%`;
+          engagementEl.style.color = pct >= 50 ? '#2ecc71' : pct >= 25 ? '#f39c12' : 'inherit';
+        } else {
+          engagementEl.textContent = '—';
+        }
+      });
+
+      // Leaderboard
+      if (participantsUnsub) participantsUnsub();
+      const lbQuery = query(collection(eventRef, 'participants'), orderBy('reaction_count', 'desc'), limit(10));
+      participantsUnsub = onSnapshot(lbQuery, (snap) => {
+        const container = document.getElementById('leaderboard');
+        container.innerHTML = '';
+        if (snap.empty) { container.innerHTML = '<div class="empty-state">No participants yet.</div>'; return; }
+        let rank = 1;
+        snap.forEach(d => {
+          const p = d.data();
+          const div = document.createElement('div');
+          div.className = 'leaderboard-item';
+          const isSelected = selectedUserId === p.anonymous_id;
+          div.innerHTML = `
+            <span class="lb-rank">#${rank++}</span>
+            <span class="lb-id">${p.anonymous_id.substring(5, 16)}…</span>
+            <span class="lb-count">${p.reaction_count}</span>
+            <button class="lb-send-btn" data-id="${p.anonymous_id}" style="${isSelected ? 'background:#dde4ff;font-weight:700;' : ''}">
+              ${isSelected ? '✓ Selected' : 'Select'}
+            </button>`;
+          container.appendChild(div);
+        });
+      });
+    }
+
+    // Event dropdown change
+    document.getElementById('event-select').addEventListener('change', (e) => {
+      if (e.target.value) switchToEvent(e.target.value);
     });
 
-    // Session stats — attendees, reactors, engagement %
-    onSnapshot(sessionRef, (d) => {
-      const data = d.exists() ? d.data() : {};
-      const attendees = data.attendee_count || 0;
-      const reactors = data.participant_count || 0;
-      document.getElementById('stat-attendees').textContent = attendees;
-      document.getElementById('stat-participants').textContent = reactors;
-      const engagementEl = document.getElementById('stat-engagement');
-      if (attendees > 0) {
-        const pct = Math.round((reactors / attendees) * 100);
-        engagementEl.textContent = `${pct}%`;
-        engagementEl.style.color = pct >= 50 ? '#2ecc71' : pct >= 25 ? '#f39c12' : 'inherit';
-      } else {
-        engagementEl.textContent = '—';
+    // New Event button
+    document.getElementById('new-event-btn').addEventListener('click', () => {
+      const defaultName = `Event — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}`;
+      document.getElementById('new-event-name-input').value = defaultName;
+      document.getElementById('new-event-modal').classList.add('visible');
+      setTimeout(() => {
+        const input = document.getElementById('new-event-name-input');
+        input.focus();
+        input.select();
+      }, 100);
+    });
+
+    document.getElementById('modal-cancel-btn').addEventListener('click', () => {
+      document.getElementById('new-event-modal').classList.remove('visible');
+    });
+
+    document.getElementById('modal-confirm-btn').addEventListener('click', async () => {
+      const name = document.getElementById('new-event-name-input').value.trim();
+      const btn = document.getElementById('modal-confirm-btn');
+      btn.disabled = true; btn.textContent = 'Starting…';
+      try {
+        const result = await httpsCallable(functions, 'newEvent')({ sessionId: sid, eventName: name });
+        document.getElementById('new-event-modal').classList.remove('visible');
+        btn.disabled = false; btn.textContent = 'Start New Event';
+        // Reload event list and switch to new event
+        await loadEventList();
+        document.getElementById('event-select').value = result.data.event_id;
+        switchToEvent(result.data.event_id);
+      } catch (err) {
+        console.error(err);
+        btn.textContent = 'Error — try again';
+        btn.disabled = false;
       }
     });
 
-    // Leaderboard
-    let selectedUserId = null;
-    const lbQuery = query(collection(sessionRef, 'participants'), orderBy('reaction_count', 'desc'), limit(10));
-    onSnapshot(lbQuery, (snap) => {
-      const container = document.getElementById('leaderboard');
-      container.innerHTML = '';
-      if (snap.empty) { container.innerHTML = '<div class="empty-state">No participants yet.</div>'; return; }
-      let rank = 1;
-      snap.forEach(d => {
-        const p = d.data();
-        const div = document.createElement('div');
-        div.className = 'leaderboard-item';
-        const isSelected = selectedUserId === p.anonymous_id;
-        div.innerHTML = `
-          <span class="lb-rank">#${rank++}</span>
-          <span class="lb-id">${p.anonymous_id.substring(5, 16)}…</span>
-          <span class="lb-count">${p.reaction_count}</span>
-          <button class="lb-send-btn" data-id="${p.anonymous_id}" style="${isSelected ? 'background:#dde4ff;font-weight:700;' : ''}">
-            ${isSelected ? '✓ Selected' : 'Select'}
-          </button>`;
-        container.appendChild(div);
-      });
+    // Close modal on backdrop click
+    document.getElementById('new-event-modal').addEventListener('click', (e) => {
+      if (e.target === document.getElementById('new-event-modal')) {
+        document.getElementById('new-event-modal').classList.remove('visible');
+      }
+    });
+
+    // Boot
+    loadEventList();
+
+    // show_reactions toggle is still session-level
+    let showReactionsEnabled = false;
+    const toggleBtn = document.getElementById('live-reactions-toggle');
+    onSnapshot(sessionRef, (d) => {
+      if (d.exists()) {
+        const val = d.data().show_reactions === true;
+        if (val !== showReactionsEnabled) {
+          showReactionsEnabled = val;
+          updateToggleBtn();
+        }
+      }
+    });
+    function updateToggleBtn() {
+      toggleBtn.textContent = `👁 Live Reactions: ${showReactionsEnabled ? 'ON' : 'OFF'}`;
+      toggleBtn.style.background = showReactionsEnabled ? '#2ecc71' : '#555';
+    }
+    toggleBtn.addEventListener('click', async () => {
+      showReactionsEnabled = !showReactionsEnabled;
+      updateToggleBtn();
+      try {
+        await setDoc(sessionRef, { show_reactions: showReactionsEnabled }, { merge: true });
+      } catch (err) {
+        console.error('Error updating show_reactions:', err);
+        showReactionsEnabled = !showReactionsEnabled;
+        updateToggleBtn();
+      }
     });
 
     // Leaderboard select
+    let selectedUserId = null;
     document.getElementById('leaderboard').addEventListener('click', (e) => {
       const btn = e.target.closest('.lb-send-btn');
       if (!btn) return;
@@ -373,7 +567,7 @@
       });
     });
 
-    // Link field show/hide based on Note vs Message selection
+    // Link field show/hide
     function setupLinkToggle(radioName, linkFieldId) {
       document.querySelectorAll(`input[name="${radioName}"]`).forEach(radio => {
         radio.addEventListener('change', () => {
@@ -387,7 +581,6 @@
     setupLinkToggle('engaged-msg-type', 'engaged-msg-link');
     setupLinkToggle('all-msg-type', 'all-msg-link');
 
-    // Helper to reset a composer panel
     function resetComposer(textId, linkId, radioName, btnEl, defaultLabel) {
       document.getElementById(textId).value = '';
       document.getElementById(linkId).value = '';
@@ -397,18 +590,15 @@
       btnEl.disabled = false;
     }
 
-    // Send to individual (engaged only)
+    // Send to individual
     document.getElementById('send-msg-btn').addEventListener('click', async () => {
-      if (!selectedUserId) return;
+      if (!selectedUserId || !activeEventId) return;
       const text = document.getElementById('engaged-msg-text').value.trim();
       if (!text) return;
       const msgType = document.querySelector('input[name="engaged-msg-type"]:checked').value;
       const rawLink = document.getElementById('engaged-msg-link').value.trim();
-      const link = rawLink && !rawLink.startsWith('http://') && !rawLink.startsWith('https://') ? 'https://' + rawLink : rawLink;
-      const payload = {
-        sessionId: sid, userId: selectedUserId, message: text,
-        persistent: msgType === 'message'
-      };
+      const link = rawLink && !rawLink.startsWith('http') ? 'https://' + rawLink : rawLink;
+      const payload = { sessionId: sid, eventId: activeEventId, userId: selectedUserId, message: text, persistent: msgType === 'message' };
       if (link) payload.link = link;
       const btn = document.getElementById('send-msg-btn');
       btn.disabled = true; btn.textContent = 'Sending…';
@@ -417,23 +607,18 @@
         btn.textContent = 'Sent ✓';
         setTimeout(() => resetComposer('engaged-msg-text', 'engaged-msg-link', 'engaged-msg-type', btn, 'Send to User'), 2000);
         btn.disabled = false;
-      } catch (err) {
-        console.error(err); btn.textContent = 'Error'; btn.disabled = false;
-      }
+      } catch (err) { console.error(err); btn.textContent = 'Error'; btn.disabled = false; }
     });
 
-    // Broadcast to engaged users only
+    // Broadcast to engaged
     document.getElementById('broadcast-engaged-btn').addEventListener('click', async () => {
+      if (!activeEventId) return;
       const text = document.getElementById('engaged-msg-text').value.trim();
       if (!text) { alert('Enter a message first.'); return; }
       const msgType = document.querySelector('input[name="engaged-msg-type"]:checked').value;
       const rawLink = document.getElementById('engaged-msg-link').value.trim();
-      const link = rawLink && !rawLink.startsWith('http://') && !rawLink.startsWith('https://') ? 'https://' + rawLink : rawLink;
-      const payload = {
-        sessionId: sid, message: text,
-        persistent: msgType === 'message',
-        engagedOnly: true
-      };
+      const link = rawLink && !rawLink.startsWith('http') ? 'https://' + rawLink : rawLink;
+      const payload = { sessionId: sid, eventId: activeEventId, message: text, persistent: msgType === 'message', engagedOnly: true };
       if (link) payload.link = link;
       const btn = document.getElementById('broadcast-engaged-btn');
       btn.disabled = true; btn.textContent = 'Sending…';
@@ -441,23 +626,18 @@
         const result = await httpsCallable(functions, 'sendBroadcast')(payload);
         btn.textContent = `Sent to ${result.data.sent} ✓`;
         setTimeout(() => resetComposer('engaged-msg-text', 'engaged-msg-link', 'engaged-msg-type', btn, '📢 Send Engaged'), 3000);
-      } catch (err) {
-        console.error(err); btn.textContent = 'Error'; btn.disabled = false;
-      }
+      } catch (err) { console.error(err); btn.textContent = 'Error'; btn.disabled = false; }
     });
 
-    // Broadcast to ALL attendees
+    // Broadcast to all
     document.getElementById('broadcast-all-btn').addEventListener('click', async () => {
+      if (!activeEventId) return;
       const text = document.getElementById('all-msg-text').value.trim();
       if (!text) { alert('Enter a message first.'); return; }
       const msgType = document.querySelector('input[name="all-msg-type"]:checked').value;
       const rawLink = document.getElementById('all-msg-link').value.trim();
-      const link = rawLink && !rawLink.startsWith('http://') && !rawLink.startsWith('https://') ? 'https://' + rawLink : rawLink;
-      const payload = {
-        sessionId: sid, message: text,
-        persistent: msgType === 'message',
-        engagedOnly: false
-      };
+      const link = rawLink && !rawLink.startsWith('http') ? 'https://' + rawLink : rawLink;
+      const payload = { sessionId: sid, eventId: activeEventId, message: text, persistent: msgType === 'message', engagedOnly: false };
       if (link) payload.link = link;
       const btn = document.getElementById('broadcast-all-btn');
       btn.disabled = true; btn.textContent = 'Sending…';
@@ -465,57 +645,21 @@
         const result = await httpsCallable(functions, 'sendBroadcast')(payload);
         btn.textContent = `Sent to ${result.data.sent} ✓`;
         setTimeout(() => resetComposer('all-msg-text', 'all-msg-link', 'all-msg-type', btn, '📢 Send to All Attendees'), 3000);
-      } catch (err) {
-        console.error(err); btn.textContent = 'Error'; btn.disabled = false;
-      }
+      } catch (err) { console.error(err); btn.textContent = 'Error'; btn.disabled = false; }
     });
 
     // CSV Export
-    document.getElementById('export-csv-btn').addEventListener('click', () => exportCSV(utteranceData, sid));
+    document.getElementById('export-csv-btn').addEventListener('click', () => exportCSV(utteranceData, sid, activeEventId));
 
-    // Live reactions toggle — writes show_reactions flag to session doc
-    let showReactionsEnabled = false;
-    const toggleBtn = document.getElementById('live-reactions-toggle');
-
-    // Read initial state
-    onSnapshot(sessionRef, (d) => {
-      if (d.exists()) {
-        const val = d.data().show_reactions === true;
-        if (val !== showReactionsEnabled) {
-          showReactionsEnabled = val;
-          updateToggleBtn();
-        }
-      }
-    });
-
-    function updateToggleBtn() {
-      toggleBtn.textContent = `👁 Live Reactions: ${showReactionsEnabled ? 'ON' : 'OFF'}`;
-      toggleBtn.style.background = showReactionsEnabled ? '#2ecc71' : '#555';
-    }
-
-    toggleBtn.addEventListener('click', async () => {
-      showReactionsEnabled = !showReactionsEnabled;
-      updateToggleBtn();
-      try {
-        await setDoc(sessionRef, { show_reactions: showReactionsEnabled }, { merge: true });
-      } catch (err) {
-        console.error('Error updating show_reactions:', err);
-        showReactionsEnabled = !showReactionsEnabled; // revert on error
-        updateToggleBtn();
-      }
-    });
-
-    // Reset
+    // Reset current event
     document.getElementById('reset-session-btn').addEventListener('click', async () => {
-      const conf = prompt(`Type "${sid}" to confirm reset. THIS CANNOT BE UNDONE.`);
+      if (!activeEventId) return;
+      const eventName = document.getElementById('event-select').options[document.getElementById('event-select').selectedIndex]?.text || activeEventId;
+      const conf = confirm(`Delete all data for "${eventName}"? This cannot be undone.`);
       if (!conf) return;
-      let v = conf.toUpperCase().replace(/[^A-Z0-9]/g, '');
-      if (v.length > 4) v = v.slice(0,4) + '-' + v.slice(4,8);
-      if (v !== sid) { alert('Session ID did not match.'); return; }
       try {
-        alert('Resetting… page will reload.');
-        await httpsCallable(functions, 'resetSession')({ sessionId: sid });
-        window.location.reload();
+        await httpsCallable(functions, 'resetSession')({ sessionId: sid, eventId: activeEventId });
+        await loadEventList();
       } catch (err) { alert(`Error: ${err.message}`); }
     });
   }
@@ -596,7 +740,8 @@
   }
 
   // --- CSV EXPORT ---
-  function exportCSV(data, sid) {
+  function exportCSV(data, sid, eventId) {
+    const eventName = document.getElementById('event-select').options[document.getElementById('event-select').selectedIndex]?.text || eventId || 'unknown';
     const items = Object.values(data).sort((a, b) => {
       const ta = a.first_seen_at ? (a.first_seen_at.toMillis ? a.first_seen_at.toMillis() : a.first_seen_at) : 0;
       const tb = b.first_seen_at ? (b.first_seen_at.toMillis ? b.first_seen_at.toMillis() : b.first_seen_at) : 0;
@@ -623,6 +768,7 @@
     // Build CSV — summary header first, then blank row, then utterance data
     const rows = [];
     rows.push([`Session Report: ${sid}`]);
+    rows.push([`Event: ${eventName}`]);
     rows.push([`Exported: ${new Date().toLocaleString()}`]);
     rows.push([]);
     rows.push(['SESSION SUMMARY']);
@@ -659,7 +805,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `reactions-${sid}-${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = `reactions-${sid}-${eventId || 'event'}-${new Date().toISOString().slice(0,10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }

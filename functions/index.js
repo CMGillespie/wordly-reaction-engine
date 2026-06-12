@@ -1,14 +1,37 @@
 // functions/index.js
-// v4 - Add registerAttendee, attendee_count tracking, engagement metrics
+// v5 - Multi-event support: data scoped under sessions/{sid}/events/{eventId}
 const { onRequest, onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
 const admin = require("firebase-admin");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 admin.initializeApp();
 
+// Helper: get the active event ref for a session
+async function getActiveEventRef(db, sessionId) {
+  const sessionRef = db.collection('sessions').doc(sessionId);
+  const sessionSnap = await sessionRef.get();
+  let eventId = sessionSnap.exists ? sessionSnap.data().active_event : null;
+  if (!eventId) {
+    // No active event — create the first one automatically
+    eventId = new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '-');
+    await sessionRef.set({
+      active_event: eventId,
+      event_index: 1,
+      show_reactions: false
+    }, { merge: true });
+    // Create the event doc
+    await sessionRef.collection('events').doc(eventId).set({
+      event_id: eventId,
+      name: `Event 1 — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
+      created_at: FieldValue.serverTimestamp(),
+      attendee_count: 0,
+      participant_count: 0
+    });
+  }
+  return { sessionRef, eventRef: sessionRef.collection('events').doc(eventId), eventId };
+}
+
 // --- REGISTER ATTENDEE ---
-// Called when attendee app connects to a session, before any reaction.
-// Creates participant doc if not exists, increments attendee_count on session.
 exports.registerAttendee = onRequest(async (request, response) => {
   response.set('Access-Control-Allow-Origin', '*');
   if (request.method === 'OPTIONS') {
@@ -27,26 +50,27 @@ exports.registerAttendee = onRequest(async (request, response) => {
   }
 
   const db = getFirestore();
-  const sessionRef = db.collection('sessions').doc(session_id);
-  const participantRef = sessionRef.collection('participants').doc(anonymous_id);
 
   try {
+    const { eventRef } = await getActiveEventRef(db, session_id);
+    const participantRef = eventRef.collection('participants').doc(anonymous_id);
+
     await db.runTransaction(async (transaction) => {
       const participantSnap = await transaction.get(participantRef);
       if (!participantSnap.exists) {
-        // New attendee — create doc and increment attendee_count
         transaction.set(participantRef, {
           anonymous_id,
           reaction_count: 0,
           registered_at: FieldValue.serverTimestamp()
         });
-        transaction.set(sessionRef, {
+        transaction.set(eventRef, {
           attendee_count: FieldValue.increment(1)
         }, { merge: true });
       }
-      // If already exists, do nothing — idempotent
     });
-    response.status(200).send('Registered.');
+    // Return the active event ID so the client can scope its listeners
+    const eventId = eventRef.id;
+    response.status(200).json({ status: 'registered', event_id: eventId });
   } catch (error) {
     logger.error('registerAttendee failed:', error);
     response.status(500).send('Error registering attendee.');
@@ -65,7 +89,7 @@ exports.addReaction = onRequest(async (request, response) => {
   }
   if (request.method !== 'POST') { response.status(405).send('Method Not Allowed'); return; }
 
-  const { session_id, utterance_guid, reaction_type, text, language, anonymous_id } = request.body;
+  const { session_id, event_id, utterance_guid, reaction_type, text, language, anonymous_id } = request.body;
   if (!session_id || !utterance_guid || !reaction_type) {
     response.status(400).send('Missing session_id, utterance_guid, or reaction_type.');
     return;
@@ -75,28 +99,38 @@ exports.addReaction = onRequest(async (request, response) => {
 
   try {
     const sessionRef = db.collection('sessions').doc(session_id);
-    const utteranceRef = sessionRef.collection('utterances').doc(utterance_guid);
-    const participantRef = sessionRef.collection('participants').doc(anonymous_id || 'anonymous');
 
-    // Deterministic dedup ID prevents duplicate reactions
+    // Use provided event_id or fall back to active_event
+    let resolvedEventId = event_id;
+    if (!resolvedEventId) {
+      const sessionSnap = await sessionRef.get();
+      resolvedEventId = sessionSnap.exists ? sessionSnap.data().active_event : null;
+    }
+    if (!resolvedEventId) {
+      response.status(400).send('No active event for session.');
+      return;
+    }
+
+    const eventRef = sessionRef.collection('events').doc(resolvedEventId);
+    const utteranceRef = eventRef.collection('utterances').doc(utterance_guid);
+    const participantRef = eventRef.collection('participants').doc(anonymous_id || 'anonymous');
+
     const dedupeId = anonymous_id
       ? `${anonymous_id}_${utterance_guid}_${reaction_type.codePointAt(0)}`
       : null;
     const userReactionRef = dedupeId
-      ? sessionRef.collection('user_reactions').doc(dedupeId)
+      ? eventRef.collection('user_reactions').doc(dedupeId)
       : null;
 
     await db.runTransaction(async (transaction) => {
       const utteranceSnap = await transaction.get(utteranceRef);
       const participantSnap = anonymous_id ? await transaction.get(participantRef) : null;
 
-      // Dedup check
       if (userReactionRef) {
         const existingReaction = await transaction.get(userReactionRef);
-        if (existingReaction.exists) return; // Already counted
+        if (existingReaction.exists) return;
       }
 
-      // Utterance document
       if (!utteranceSnap.exists) {
         if (!text || !language) throw new Error('New utterance missing text/language.');
         transaction.set(utteranceRef, {
@@ -119,7 +153,6 @@ exports.addReaction = onRequest(async (request, response) => {
         transaction.update(utteranceRef, updateData);
       }
 
-      // User reaction log
       if (userReactionRef) {
         transaction.set(userReactionRef, {
           anonymous_id, utterance_guid, reaction_type,
@@ -127,18 +160,14 @@ exports.addReaction = onRequest(async (request, response) => {
         });
       }
 
-      // Participant — increment reaction_count
-      // participant_count only increments on FIRST reaction (not on registration)
       if (anonymous_id && participantSnap) {
         if (!participantSnap.exists) {
-          // Reacted before registering (edge case) — create doc
           transaction.set(participantRef, {
             anonymous_id,
             reaction_count: 1,
             registered_at: FieldValue.serverTimestamp()
           });
-          // Increment both counts since they weren't registered
-          transaction.set(sessionRef, {
+          transaction.set(eventRef, {
             attendee_count: FieldValue.increment(1),
             participant_count: FieldValue.increment(1)
           }, { merge: true });
@@ -147,9 +176,8 @@ exports.addReaction = onRequest(async (request, response) => {
           transaction.update(participantRef, {
             reaction_count: FieldValue.increment(1)
           });
-          // Only increment participant_count (reactors) on their FIRST reaction
           if (!wasReactor) {
-            transaction.set(sessionRef, {
+            transaction.set(eventRef, {
               participant_count: FieldValue.increment(1)
             }, { merge: true });
           }
@@ -166,33 +194,48 @@ exports.addReaction = onRequest(async (request, response) => {
 
 // --- SEND MESSAGE (individual) ---
 exports.sendMessage = onCall({ cors: true }, async (request) => {
-  const { sessionId, userId, message, persistent, link } = request.data;
+  const { sessionId, eventId, userId, message, persistent, link } = request.data;
   if (!sessionId || !userId || !message) {
     throw new HttpsError('invalid-argument', 'sessionId, userId, and message are required.');
   }
   const db = getFirestore();
-  const msgData = {
-    message,
-    persistent: persistent === true,
-    timestamp: FieldValue.serverTimestamp()
-  };
+
+  // Resolve eventId
+  let resolvedEventId = eventId;
+  if (!resolvedEventId) {
+    const snap = await db.collection('sessions').doc(sessionId).get();
+    resolvedEventId = snap.exists ? snap.data().active_event : null;
+  }
+  if (!resolvedEventId) throw new HttpsError('not-found', 'No active event.');
+
+  const msgData = { message, persistent: persistent === true, timestamp: FieldValue.serverTimestamp() };
   if (link) msgData.link = link;
+
   await db.collection('sessions').doc(sessionId)
+    .collection('events').doc(resolvedEventId)
     .collection('participants').doc(userId)
     .collection('messages').add(msgData);
-  logger.info(`Message sent to ${userId} in session ${sessionId}`);
+
   return { status: 'success' };
 });
 
 // --- SEND BROADCAST ---
-// engagedOnly: true = only reactors (reaction_count > 0), false = all registered attendees
 exports.sendBroadcast = onCall({ cors: true }, async (request) => {
-  const { sessionId, message, persistent, engagedOnly, link } = request.data;
+  const { sessionId, eventId, message, persistent, engagedOnly, link } = request.data;
   if (!sessionId || !message) {
     throw new HttpsError('invalid-argument', 'sessionId and message are required.');
   }
   const db = getFirestore();
-  let participantsSnap = await db.collection('sessions').doc(sessionId)
+
+  let resolvedEventId = eventId;
+  if (!resolvedEventId) {
+    const snap = await db.collection('sessions').doc(sessionId).get();
+    resolvedEventId = snap.exists ? snap.data().active_event : null;
+  }
+  if (!resolvedEventId) return { status: 'success', sent: 0 };
+
+  const participantsSnap = await db.collection('sessions').doc(sessionId)
+    .collection('events').doc(resolvedEventId)
     .collection('participants').get();
 
   if (participantsSnap.empty) return { status: 'success', sent: 0 };
@@ -203,45 +246,95 @@ exports.sendBroadcast = onCall({ cors: true }, async (request) => {
 
   if (docs.length === 0) return { status: 'success', sent: 0 };
 
-  const msgData = {
-    message,
-    persistent: persistent === true,
-    timestamp: FieldValue.serverTimestamp()
-  };
+  const msgData = { message, persistent: persistent === true, timestamp: FieldValue.serverTimestamp() };
   if (link) msgData.link = link;
 
   const batch = db.batch();
   docs.forEach(doc => {
     const msgRef = db.collection('sessions').doc(sessionId)
+      .collection('events').doc(resolvedEventId)
       .collection('participants').doc(doc.id)
       .collection('messages').doc();
     batch.set(msgRef, msgData);
   });
   await batch.commit();
 
-  logger.info(`Broadcast sent to ${docs.length} participants (engagedOnly=${engagedOnly}) in session ${sessionId}`);
   return { status: 'success', sent: docs.length };
 });
 
+// --- NEW EVENT ---
+// Archives current event and starts a fresh one under the same session ID
+exports.newEvent = onCall({ cors: true }, async (request) => {
+  const { sessionId, eventName } = request.data;
+  if (!sessionId) throw new HttpsError('invalid-argument', 'sessionId is required.');
+
+  const db = getFirestore();
+  const sessionRef = db.collection('sessions').doc(sessionId);
+  const sessionSnap = await sessionRef.get();
+  const currentIndex = sessionSnap.exists ? (sessionSnap.data().event_index || 1) : 1;
+  const nextIndex = currentIndex + 1;
+
+  // Build new event ID from timestamp
+  const newEventId = new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '-');
+  const newEventName = eventName && eventName.trim()
+    ? eventName.trim()
+    : `Event ${nextIndex} — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+
+  await sessionRef.collection('events').doc(newEventId).set({
+    event_id: newEventId,
+    name: newEventName,
+    created_at: FieldValue.serverTimestamp(),
+    attendee_count: 0,
+    participant_count: 0
+  });
+
+  await sessionRef.set({
+    active_event: newEventId,
+    event_index: nextIndex,
+    show_reactions: false
+  }, { merge: true });
+
+  logger.info(`New event created: ${newEventId} (${newEventName}) for session ${sessionId}`);
+  return { status: 'success', event_id: newEventId, event_name: newEventName };
+});
+
 // --- RESET SESSION ---
+// Now deletes a single event (or all events if no eventId provided)
 exports.resetSession = onCall({ cors: true }, async (request) => {
-  const { sessionId } = request.data;
+  const { sessionId, eventId } = request.data;
   if (!sessionId) throw new HttpsError('invalid-argument', 'sessionId is required.');
 
   const db = getFirestore();
   const sessionRef = db.collection('sessions').doc(sessionId);
 
-  await deleteCollection(sessionRef.collection('utterances'));
-  await deleteCollection(sessionRef.collection('user_reactions'));
-
-  const participantsSnap = await sessionRef.collection('participants').get();
-  for (const pDoc of participantsSnap.docs) {
-    await deleteCollection(pDoc.ref.collection('messages'));
-    await pDoc.ref.delete();
+  if (eventId) {
+    // Delete a specific event only
+    const eventRef = sessionRef.collection('events').doc(eventId);
+    const participantsSnap = await eventRef.collection('participants').get();
+    for (const pDoc of participantsSnap.docs) {
+      await deleteCollection(pDoc.ref.collection('messages'));
+      await pDoc.ref.delete();
+    }
+    await deleteCollection(eventRef.collection('utterances'));
+    await deleteCollection(eventRef.collection('user_reactions'));
+    await eventRef.delete();
+  } else {
+    // Nuke entire session (all events)
+    const eventsSnap = await sessionRef.collection('events').get();
+    for (const eDoc of eventsSnap.docs) {
+      const participantsSnap = await eDoc.ref.collection('participants').get();
+      for (const pDoc of participantsSnap.docs) {
+        await deleteCollection(pDoc.ref.collection('messages'));
+        await pDoc.ref.delete();
+      }
+      await deleteCollection(eDoc.ref.collection('utterances'));
+      await deleteCollection(eDoc.ref.collection('user_reactions'));
+      await eDoc.ref.delete();
+    }
+    await sessionRef.delete();
   }
-  await sessionRef.delete();
 
-  logger.info(`Reset session: ${sessionId}`);
+  logger.info(`Reset session: ${sessionId} event: ${eventId || 'ALL'}`);
   return { status: 'success' };
 });
 

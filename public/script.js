@@ -50,6 +50,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let sessionFlagListener = null;
   const utteranceListeners = {};
   const MAX_UTTERANCE_LISTENERS = 20;
+  // v25: active event ID (scoped per event within a session)
+  let activeEventId = null;
 
   // --- Application State ---
   const state = {
@@ -334,11 +336,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!state.sessionId) return;
     const anonymousId = getOrCreateAnonymousId();
     try {
-      await fetch(REGISTER_ATTENDEE_URL, {
+      const response = await fetch(REGISTER_ATTENDEE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: state.sessionId, anonymous_id: anonymousId })
       });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.event_id) activeEventId = data.event_id;
+      }
     } catch (e) {
       console.warn('Attendee registration failed (non-critical):', e);
     }
@@ -406,6 +412,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const anonymousId = getOrCreateAnonymousId();
     const payload = {
       session_id:     state.sessionId,
+      event_id:       activeEventId || undefined,
       utterance_guid: utteranceData.phraseId,
       reaction_type:  reactionType,
       text:           utteranceData.translatedText || '',
@@ -440,8 +447,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (window.appDb && window.firestore) {
         clearInterval(waitForFirebase);
         const anonymousId = getOrCreateAnonymousId();
-        const messagesPath = `sessions/${state.sessionId}/participants/${anonymousId}/messages`;
-        const messagesRef = window.firestore.collection(window.appDb, messagesPath);
+        // Use event-scoped path if we have an activeEventId, fall back to session-level for backwards compat
+        const basePath = activeEventId
+          ? `sessions/${state.sessionId}/events/${activeEventId}/participants/${anonymousId}/messages`
+          : `sessions/${state.sessionId}/participants/${anonymousId}/messages`;
+        const messagesRef = window.firestore.collection(window.appDb, basePath);
         messageListenerUnsubscribe = window.firestore.onSnapshot(messagesRef, (snapshot) => {
           snapshot.docChanges().forEach((change) => {
             if (change.type === 'added') {
@@ -499,7 +509,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!window.appDb || !window.firestore || !window.firestore.doc) return;
 
     const utteranceRef = window.firestore.doc(
-      window.appDb, 'sessions', state.sessionId, 'utterances', phraseId
+      window.appDb, 'sessions', state.sessionId, 'events', activeEventId || '_none', 'utterances', phraseId
     );
 
     const unsub = window.firestore.onSnapshot(utteranceRef, (snap) => {
