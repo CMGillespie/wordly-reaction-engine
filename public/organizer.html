@@ -42,6 +42,57 @@
             background: rgba(255,255,255,0.15); padding: 4px 12px;
             border-radius: 20px; font-size: 0.85em; letter-spacing: 1px;
         }
+        .top-bar-right { display: flex; align-items: center; gap: 10px; }
+        .event-selector-wrap { display: flex; align-items: center; gap: 6px; }
+        .event-selector-wrap label { font-size: 0.75em; color: rgba(255,255,255,0.6); white-space: nowrap; }
+        #event-select {
+            background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2);
+            color: white; padding: 4px 8px; border-radius: 5px; font-size: 0.82em;
+            max-width: 200px; cursor: pointer;
+        }
+        #event-select option { background: #1a1a2e; color: white; }
+        #new-event-btn {
+            padding: 4px 10px; background: #2ecc71; color: white; border: none;
+            border-radius: 5px; cursor: pointer; font-size: 0.78em; font-weight: 600; white-space: nowrap;
+        }
+        #new-event-btn:hover { background: #27ae60; }
+        #logout-btn {
+            padding: 4px 10px; background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7);
+            border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; cursor: pointer;
+            font-size: 0.78em; white-space: nowrap;
+        }
+        #logout-btn:hover { background: rgba(255,255,255,0.2); color: white; }
+
+        /* New Event Modal */
+        #new-event-modal {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+            z-index: 9999; align-items: center; justify-content: center;
+        }
+        #new-event-modal.visible { display: flex; }
+        .modal-box {
+            background: white; border-radius: 10px; padding: 28px 28px 22px;
+            width: 90%; max-width: 440px; box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+        }
+        .modal-box h2 { font-size: 1.1em; color: #1a1a2e; margin-bottom: 6px; }
+        .modal-box p { font-size: 0.85em; color: #888; margin-bottom: 18px; line-height: 1.4; }
+        .modal-box label { font-size: 0.82em; color: #555; display: block; margin-bottom: 5px; font-weight: 600; }
+        .modal-box input[type="text"] {
+            width: 100%; padding: 9px 12px; border: 1px solid #dde; border-radius: 6px;
+            font-size: 0.9em; margin-bottom: 18px; font-family: inherit;
+        }
+        .modal-box input[type="text"]:focus { outline: none; border-color: #017CFF; box-shadow: 0 0 0 3px rgba(1,124,255,0.15); }
+        .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+        .modal-cancel-btn {
+            padding: 8px 18px; background: #f5f5f5; border: none; border-radius: 6px;
+            cursor: pointer; font-size: 0.88em; font-family: inherit;
+        }
+        .modal-cancel-btn:hover { background: #eee; }
+        .modal-confirm-btn {
+            padding: 8px 18px; background: #017CFF; color: white; border: none;
+            border-radius: 6px; cursor: pointer; font-size: 0.88em; font-weight: 600; font-family: inherit;
+        }
+        .modal-confirm-btn:hover { background: #0062cc; }
+        .modal-confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
         /* --- SUMMARY BAR --- */
         .summary-bar {
@@ -176,6 +227,20 @@
     <button id="enter-console-btn">Launch Console</button>
 </div>
 
+<!-- New Event Modal -->
+<div id="new-event-modal">
+    <div class="modal-box">
+        <h2>Start New Event</h2>
+        <p>Current session data will be archived and accessible from the Event dropdown. A fresh slate begins immediately.</p>
+        <label for="new-event-name-input">Event Name</label>
+        <input type="text" id="new-event-name-input" placeholder="e.g. Infocomm Day 1 — Morning" maxlength="80">
+        <div class="modal-actions">
+            <button class="modal-cancel-btn" id="modal-cancel-btn">Cancel</button>
+            <button class="modal-confirm-btn" id="modal-confirm-btn">Start New Event</button>
+        </div>
+    </div>
+</div>
+
 <!-- MAIN APP -->
 <div id="app" style="display:none;">
     <div class="main-panel">
@@ -195,7 +260,15 @@
                 </svg>
             </div>
             <h1>Reaction Console</h1>
-            <div class="session-badge" id="session-badge">—</div>
+            <div class="top-bar-right">
+                <div class="event-selector-wrap">
+                    <label for="event-select">Event:</label>
+                    <select id="event-select"><option value="">Loading…</option></select>
+                    <button id="new-event-btn">+ New Event</button>
+                </div>
+                <div class="session-badge" id="session-badge">—</div>
+                <button id="logout-btn">← Sessions</button>
+            </div>
         </div>
 
         <!-- Summary bar -->
@@ -265,7 +338,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-  import { getFirestore, collection, query, orderBy, onSnapshot, doc, limit, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getFirestore, collection, query, orderBy, onSnapshot, doc, limit, updateDoc, setDoc, getDocs, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
   import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
 
   const firebaseConfig = {
@@ -306,65 +379,166 @@
     document.getElementById('session-badge').textContent = sid;
 
     const sessionRef = doc(db, 'sessions', sid);
-
-    // Live utterances — sorted by first_seen_at
-    let utteranceData = {};
-    const utterancesQuery = query(collection(sessionRef, 'utterances'), orderBy('first_seen_at', 'asc'));
-    onSnapshot(utterancesQuery, (snap) => {
-      snap.docChanges().forEach(change => {
-        if (change.type === 'removed') {
-          delete utteranceData[change.doc.id];
-        } else {
-          // 'added' or 'modified' — update the entry
-          utteranceData[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
-        }
-      });
-      renderUtterances(utteranceData);
-      updateSummary(utteranceData);
-    }, (error) => {
-      console.error('Utterance listener error:', error);
+    let selectedUserId = null;
+    document.getElementById('logout-btn').addEventListener('click', () => {
+      window.location.href = 'organizer.html';
     });
 
-    // Session stats — attendees, reactors, engagement %
-    onSnapshot(sessionRef, (d) => {
-      const data = d.exists() ? d.data() : {};
-      const attendees = data.attendee_count || 0;
-      const reactors = data.participant_count || 0;
-      document.getElementById('stat-attendees').textContent = attendees;
-      document.getElementById('stat-participants').textContent = reactors;
-      const engagementEl = document.getElementById('stat-engagement');
-      if (attendees > 0) {
-        const pct = Math.round((reactors / attendees) * 100);
-        engagementEl.textContent = `${pct}%`;
-        engagementEl.style.color = pct >= 50 ? '#2ecc71' : pct >= 25 ? '#f39c12' : 'inherit';
-      } else {
-        engagementEl.textContent = '—';
+    // --- Event management ---
+    // Strategy: live session always reads from flat sessions/{sid}/ path.
+    // Past events are archived under sessions/{sid}/events/{eventId}/ for recall only.
+    // The event dropdown shows archived events + "Live Session" option.
+
+    const LIVE_EVENT_ID = '__live__';
+    let activeEventId = LIVE_EVENT_ID;
+    let utteranceUnsub = null;
+    let participantsUnsub = null;
+    let sessionStatsUnsub = null;
+    let utteranceData = {};
+
+    async function loadEventList() {
+      const select = document.getElementById('event-select');
+      select.innerHTML = '<option value="__live__">▶ Live Session</option>';
+      try {
+        const eventsSnap = await getDocs(
+          query(collection(sessionRef, 'events'), orderBy('created_at', 'desc'))
+        );
+        eventsSnap.forEach(d => {
+          const opt = document.createElement('option');
+          opt.value = d.id;
+          opt.textContent = d.data().name || d.id;
+          select.appendChild(opt);
+        });
+      } catch(e) { console.warn('No archived events yet.'); }
+      select.value = LIVE_EVENT_ID;
+      switchToEvent(LIVE_EVENT_ID);
+    }
+
+    function teardownListeners() {
+      if (utteranceUnsub) { utteranceUnsub(); utteranceUnsub = null; }
+      if (participantsUnsub) { participantsUnsub(); participantsUnsub = null; }
+      if (sessionStatsUnsub) { sessionStatsUnsub(); sessionStatsUnsub = null; }
+      utteranceData = {};
+      const ul = document.getElementById('utterance-list');
+      if (ul) ul.innerHTML = '';
+      const es = document.getElementById('empty-state');
+      if (es) es.style.display = 'block';
+    }
+
+    function switchToEvent(eventId) {
+      if (activeEventId === eventId) return;
+      activeEventId = eventId;
+      teardownListeners();
+
+      const isLive = eventId === LIVE_EVENT_ID;
+      const dataRef = isLive ? sessionRef : doc(db, 'sessions', sid, 'events', eventId);
+      const utterancesCol = isLive
+        ? collection(sessionRef, 'utterances')
+        : collection(db, 'sessions', sid, 'events', eventId, 'utterances');
+      const participantsCol = isLive
+        ? collection(sessionRef, 'participants')
+        : collection(db, 'sessions', sid, 'events', eventId, 'participants');
+
+      // Utterances
+      const uq = query(utterancesCol, orderBy('first_seen_at', 'asc'));
+      utteranceUnsub = onSnapshot(uq, (snap) => {
+        snap.docChanges().forEach(change => {
+          if (change.type === 'removed') {
+            delete utteranceData[change.doc.id];
+          } else {
+            utteranceData[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
+          }
+        });
+        renderUtterances(utteranceData);
+        updateSummary(utteranceData);
+      }, (err) => console.error('Utterance listener error:', err));
+
+      // Stats
+      sessionStatsUnsub = onSnapshot(dataRef, (d) => {
+        const data = d.exists() ? d.data() : {};
+        const attendees = data.attendee_count || 0;
+        const reactors = data.participant_count || 0;
+        document.getElementById('stat-attendees').textContent = attendees;
+        document.getElementById('stat-participants').textContent = reactors;
+        const engagementEl = document.getElementById('stat-engagement');
+        if (attendees > 0) {
+          const pct = Math.round((reactors / attendees) * 100);
+          engagementEl.textContent = `${pct}%`;
+          engagementEl.style.color = pct >= 50 ? '#2ecc71' : pct >= 25 ? '#f39c12' : 'inherit';
+        } else {
+          engagementEl.textContent = '—';
+        }
+      });
+
+      // Leaderboard
+      const lbq = query(participantsCol, orderBy('reaction_count', 'desc'), limit(10));
+      participantsUnsub = onSnapshot(lbq, (snap) => {
+        const container = document.getElementById('leaderboard');
+        container.innerHTML = '';
+        if (snap.empty) { container.innerHTML = '<div class="empty-state">No participants yet.</div>'; return; }
+        let rank = 1;
+        snap.forEach(d => {
+          const p = d.data();
+          const div = document.createElement('div');
+          div.className = 'leaderboard-item';
+          const isSelected = selectedUserId === p.anonymous_id;
+          div.innerHTML = `
+            <span class="lb-rank">#${rank++}</span>
+            <span class="lb-id">${p.anonymous_id.substring(5, 16)}…</span>
+            <span class="lb-count">${p.reaction_count}</span>
+            <button class="lb-send-btn" data-id="${p.anonymous_id}" style="${isSelected ? 'background:#dde4ff;font-weight:700;' : ''}">
+              ${isSelected ? '✓ Selected' : 'Select'}
+            </button>`;
+          container.appendChild(div);
+        });
+      });
+    }
+
+    document.getElementById('event-select').addEventListener('change', (e) => {
+      if (e.target.value) switchToEvent(e.target.value);
+    });
+
+    // New Event button
+    document.getElementById('new-event-btn').addEventListener('click', () => {
+      const defaultName = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        + ' — ' + new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+      document.getElementById('new-event-name-input').value = defaultName;
+      document.getElementById('new-event-modal').classList.add('visible');
+      setTimeout(() => {
+        const input = document.getElementById('new-event-name-input');
+        input.focus(); input.select();
+      }, 100);
+    });
+
+    document.getElementById('modal-cancel-btn').addEventListener('click', () => {
+      document.getElementById('new-event-modal').classList.remove('visible');
+    });
+
+    document.getElementById('new-event-modal').addEventListener('click', (e) => {
+      if (e.target === document.getElementById('new-event-modal'))
+        document.getElementById('new-event-modal').classList.remove('visible');
+    });
+
+    document.getElementById('modal-confirm-btn').addEventListener('click', async () => {
+      const name = document.getElementById('new-event-name-input').value.trim();
+      const btn = document.getElementById('modal-confirm-btn');
+      btn.disabled = true; btn.textContent = 'Starting…';
+      try {
+        const result = await httpsCallable(functions, 'newEvent')({ sessionId: sid, eventName: name });
+        document.getElementById('new-event-modal').classList.remove('visible');
+        btn.disabled = false; btn.textContent = 'Start New Event';
+        await loadEventList();
+        document.getElementById('event-select').value = LIVE_EVENT_ID;
+        switchToEvent(LIVE_EVENT_ID);
+      } catch(err) {
+        console.error(err);
+        btn.textContent = 'Error — try again';
+        btn.disabled = false;
       }
     });
 
-    // Leaderboard
-    let selectedUserId = null;
-    const lbQuery = query(collection(sessionRef, 'participants'), orderBy('reaction_count', 'desc'), limit(10));
-    onSnapshot(lbQuery, (snap) => {
-      const container = document.getElementById('leaderboard');
-      container.innerHTML = '';
-      if (snap.empty) { container.innerHTML = '<div class="empty-state">No participants yet.</div>'; return; }
-      let rank = 1;
-      snap.forEach(d => {
-        const p = d.data();
-        const div = document.createElement('div');
-        div.className = 'leaderboard-item';
-        const isSelected = selectedUserId === p.anonymous_id;
-        div.innerHTML = `
-          <span class="lb-rank">#${rank++}</span>
-          <span class="lb-id">${p.anonymous_id.substring(5, 16)}…</span>
-          <span class="lb-count">${p.reaction_count}</span>
-          <button class="lb-send-btn" data-id="${p.anonymous_id}" style="${isSelected ? 'background:#dde4ff;font-weight:700;' : ''}">
-            ${isSelected ? '✓ Selected' : 'Select'}
-          </button>`;
-        container.appendChild(div);
-      });
-    });
+    // Boot
+    loadEventList();
 
     // Leaderboard select
     document.getElementById('leaderboard').addEventListener('click', (e) => {

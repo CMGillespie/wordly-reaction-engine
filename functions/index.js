@@ -253,3 +253,76 @@ async function deleteCollection(collectionRef, batchSize = 100) {
   await batch.commit();
   if (snapshot.size === batchSize) await deleteCollection(collectionRef, batchSize);
 }
+
+// --- NEW EVENT ---
+// Archives current flat session data into sessions/{sid}/events/{eventId}/
+// then resets the flat session for a fresh start.
+exports.newEvent = onCall({ cors: true }, async (request) => {
+  const { sessionId, eventName } = request.data;
+  if (!sessionId) throw new HttpsError('invalid-argument', 'sessionId is required.');
+
+  const db = getFirestore();
+  const sessionRef = db.collection('sessions').doc(sessionId);
+
+  // Generate event ID from timestamp
+  const eventId = new Date().toISOString().slice(0, 16).replace('T', '_').replace(':', '-');
+  const name = (eventName && eventName.trim()) ? eventName.trim()
+    : `Event ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`;
+
+  const eventRef = sessionRef.collection('events').doc(eventId);
+
+  // Read current flat session data
+  const sessionSnap = await sessionRef.get();
+  const sessionData = sessionSnap.exists ? sessionSnap.data() : {};
+
+  // Copy utterances to archive
+  const utterancesSnap = await sessionRef.collection('utterances').get();
+  const participantsSnap = await sessionRef.collection('participants').get();
+  const userReactionsSnap = await sessionRef.collection('user_reactions').get();
+
+  const batchWrite = db.batch();
+
+  // Create event archive doc
+  batchWrite.set(eventRef, {
+    event_id: eventId,
+    name,
+    created_at: FieldValue.serverTimestamp(),
+    attendee_count: sessionData.attendee_count || 0,
+    participant_count: sessionData.participant_count || 0,
+    show_reactions: false,
+  });
+
+  // Copy utterances
+  utterancesSnap.docs.forEach(d => {
+    batchWrite.set(eventRef.collection('utterances').doc(d.id), d.data());
+  });
+
+  // Copy participants (without messages subcollection — too complex for batch)
+  participantsSnap.docs.forEach(d => {
+    batchWrite.set(eventRef.collection('participants').doc(d.id), d.data());
+  });
+
+  // Copy user_reactions
+  userReactionsSnap.docs.forEach(d => {
+    batchWrite.set(eventRef.collection('user_reactions').doc(d.id), d.data());
+  });
+
+  await batchWrite.commit();
+
+  // Reset flat session data
+  await deleteCollection(sessionRef.collection('utterances'));
+  await deleteCollection(sessionRef.collection('user_reactions'));
+  const pSnap = await sessionRef.collection('participants').get();
+  for (const pDoc of pSnap.docs) {
+    await deleteCollection(pDoc.ref.collection('messages'));
+    await pDoc.ref.delete();
+  }
+  await sessionRef.set({
+    participant_count: 0,
+    attendee_count: 0,
+    show_reactions: false,
+  }, { merge: false });
+
+  logger.info(`New event created: ${eventId} (${name}) for session ${sessionId}`);
+  return { status: 'success', event_id: eventId, event_name: name };
+});
