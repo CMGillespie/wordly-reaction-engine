@@ -390,7 +390,7 @@
     // The event dropdown shows archived events + "Live Session" option.
 
     const LIVE_EVENT_ID = '__live__';
-    let activeEventId = LIVE_EVENT_ID;
+    let activeEventId = null;  // null forces first switchToEvent call to always run
     let utteranceUnsub = null;
     let participantsUnsub = null;
     let sessionStatsUnsub = null;
