@@ -213,6 +213,7 @@
             <div class="summary-stat"><div class="num" id="stat-question">0</div><div class="label">❓</div></div>
             <button class="export-btn" id="export-csv-btn">⬇ Export CSV</button>
             <button class="export-btn" id="live-reactions-toggle" style="background:#555;" title="Toggle live reaction counts visible to attendees">👁 Live Reactions: OFF</button>
+            <button class="export-btn" id="launch-overlay-btn" style="background:#8e44ad;" title="Configure and launch the emoji overlay for AV production">🎬 Launch Overlay</button>
         </div>
 
         <!-- Utterance list -->
@@ -310,12 +311,18 @@
     let utteranceData = {};
     const utterancesQuery = query(collection(sessionRef, 'utterances'), orderBy('first_seen_at', 'asc'));
     onSnapshot(utterancesQuery, (snap) => {
-      snap.forEach(d => { utteranceData[d.id] = { id: d.id, ...d.data() }; });
       snap.docChanges().forEach(change => {
-        if (change.type === 'removed') delete utteranceData[change.doc.id];
+        if (change.type === 'removed') {
+          delete utteranceData[change.doc.id];
+        } else {
+          // 'added' or 'modified' — update the entry
+          utteranceData[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
+        }
       });
       renderUtterances(utteranceData);
       updateSummary(utteranceData);
+    }, (error) => {
+      console.error('Utterance listener error:', error);
     });
 
     // Session stats — attendees, reactors, engagement %
@@ -473,6 +480,12 @@
     // CSV Export
     document.getElementById('export-csv-btn').addEventListener('click', () => exportCSV(utteranceData, sid));
 
+    // Launch Overlay — opens config page in new tab pre-seeded with session ID
+    document.getElementById('launch-overlay-btn').addEventListener('click', () => {
+      const configUrl = `overlay-config.html?session=${sid}`;
+      window.open(configUrl, '_blank');
+    });
+
     // Live reactions toggle — writes show_reactions flag to session doc
     let showReactionsEnabled = false;
     const toggleBtn = document.getElementById('live-reactions-toggle');
@@ -541,8 +554,8 @@
       return ta - tb;
     });
 
-    if (items.length === 0) { empty.style.display = 'block'; return; }
-    empty.style.display = 'none';
+    if (items.length === 0) { if (empty) empty.style.display = 'block'; return; }
+    if (empty) empty.style.display = 'none';
 
     // Find max reactions for highlighting top reacted
     const maxReactions = Math.max(...items.map(totalReactions), 1);
