@@ -181,15 +181,16 @@
 
       // Listen to user_reactions subcollection for new reactions
       // We watch utterances for reaction count changes and diff them
-      let knownCounts = {}; // utteranceId -> { thumbs_up: N, ... }
+      let knownCounts = {};
 
-      const EMOJI_MAP = {
-        reaction_thumbs_up:   '👍',
-        reaction_thumbs_down: '👎',
-        reaction_heart:       '❤️',
-        reaction_thinking:    '🤔',
-        reaction_question:    '❓',
+      const EMOJI_KEY_MAP = {
+        'reaction_thumbs_up':'👍','reaction_thumbs_down':'👎',
+        'reaction_heart':'❤️','reaction_thinking':'🤔','reaction_question':'❓'
       };
+
+      function fieldToEmoji(field) {
+        return EMOJI_KEY_MAP[field] || String.fromCodePoint(parseInt(field.replace('reaction_','')));
+      }
 
       const utterancesRef = collection(db, 'sessions', sessionId, 'utterances');
 
@@ -200,20 +201,20 @@
           const data = change.doc.data();
           const prev = knownCounts[id] || {};
 
-          Object.entries(EMOJI_MAP).forEach(([field, emoji]) => {
-            const newCount  = data[field] || 0;
+          // Check all reaction_ fields dynamically
+          Object.entries(data).filter(([k]) => k.startsWith('reaction_')).forEach(([field, newCount]) => {
             const prevCount = prev[field] || 0;
-            const delta     = newCount - prevCount;
-            // Spawn one emoji per new reaction (cap at 5 to avoid bursts on first load)
+            const delta = (newCount || 0) - prevCount;
             for (let i = 0; i < Math.min(delta, 5); i++) {
-              // Slight stagger if multiple reactions came in at once
-              setTimeout(() => spawnEmoji(emoji), i * 180);
+              setTimeout(() => spawnEmoji(fieldToEmoji(field)), i * 180);
             }
           });
 
           // Update known counts
           knownCounts[id] = {};
-          Object.keys(EMOJI_MAP).forEach(f => knownCounts[id][f] = data[f] || 0);
+          Object.entries(data).filter(([k]) => k.startsWith('reaction_')).forEach(([k,v]) => {
+            knownCounts[id][k] = v || 0;
+          });
         });
       });
     }
