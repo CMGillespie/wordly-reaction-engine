@@ -319,6 +319,9 @@
             <button class="emoji-toggle-btn" data-emoji="🎉">🎉</button>
             <span class="emoji-picker-note">Toggle to enable/disable for attendees (min 1)</span>
         </div>
+  <div style="display:flex;align-items:center;justify-content:flex-end;padding:6px 20px 0;flex-shrink:0;">
+            <button id="reverse-order-btn" style="background:none;border:1px solid #dde;border-radius:5px;padding:3px 10px;cursor:pointer;font-size:0.78em;color:#888;">↓ Oldest First</button>
+  </div>
 
         <!-- Utterance list -->
         <div class="utterance-list" id="utterance-list">
@@ -684,7 +687,12 @@
 
     // CSV Export
     document.getElementById('export-csv-btn').addEventListener('click', () => exportCSV(utteranceData, sid));
-
+    let reverseOrder = false;
+    document.getElementById('reverse-order-btn').addEventListener('click', () => {
+      reverseOrder = !reverseOrder;
+      document.getElementById('reverse-order-btn').textContent = reverseOrder ? '↑ Newest First' : '↓ Oldest First';
+      renderUtterances(utteranceData);
+    });
     // Launch Overlay — opens config page in new tab pre-seeded with session ID
     document.getElementById('launch-overlay-btn').addEventListener('click', () => {
       const configUrl = `overlay-config.html?session=${sid}`;
@@ -803,7 +811,7 @@
     const items = Object.values(data).sort((a, b) => {
       const ta = a.first_seen_at ? (a.first_seen_at.toMillis ? a.first_seen_at.toMillis() : a.first_seen_at) : 0;
       const tb = b.first_seen_at ? (b.first_seen_at.toMillis ? b.first_seen_at.toMillis() : b.first_seen_at) : 0;
-      return ta - tb;
+      return reverseOrder ? tb - ta : ta - tb;
     });
 
     if (items.length === 0) { if (empty) empty.style.display = 'block'; return; }
