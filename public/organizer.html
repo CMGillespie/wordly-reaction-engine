@@ -282,9 +282,7 @@
                     <button id="new-event-btn">+ New Event</button>
                 </div>
                 <div class="session-badge" id="session-badge">—</div>
-                <button id="logout-btn" title="Back to session selector">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Exit
-                </button>
+                <button id="logout-btn">← Sessions</button>
             </div>
         </div>
 
@@ -303,7 +301,7 @@
             <div class="summary-stat"><div class="num" id="stat-question">0</div><div class="label">❓</div></div>
             <button class="export-btn" id="export-csv-btn">⬇ Export CSV</button>
             <button class="export-btn" id="live-reactions-toggle" style="background:#555;" title="Toggle live reaction counts visible to attendees">👁 Live Reactions: OFF</button>
-            <button class="export-btn" id="launch-overlay-btn" style="background:#0a8a7a;" title="Configure and launch the emoji overlay for AV production">🎬 Launch Overlay</button>
+            <button class="export-btn" id="launch-overlay-btn" style="background:#8e44ad;" title="Configure and launch the emoji overlay for AV production">🎬 Launch Overlay</button>
         </div>
 
         <!-- Emoji picker -->
@@ -320,12 +318,6 @@
             <button class="emoji-toggle-btn" data-emoji="👏">👏</button>
             <button class="emoji-toggle-btn" data-emoji="🎉">🎉</button>
             <span class="emoji-picker-note">Toggle to enable/disable for attendees (min 1)</span>
-        </div>
-
-        <!-- Utterance list header -->
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 20px 0;flex-shrink:0;">
-            <span style="font-size:0.72em;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#888;">Reactions</span>
-            <button id="reverse-order-btn" title="Reverse order" style="background:none;border:1px solid #dde;border-radius:5px;padding:3px 10px;cursor:pointer;font-size:0.78em;color:#888;">↓ Oldest First</button>
         </div>
 
         <!-- Utterance list -->
@@ -693,14 +685,6 @@
     // CSV Export
     document.getElementById('export-csv-btn').addEventListener('click', () => exportCSV(utteranceData, sid));
 
-    // Reverse order toggle
-    document.getElementById('reverse-order-btn').addEventListener('click', () => {
-      reverseOrder = !reverseOrder;
-      const btn = document.getElementById('reverse-order-btn');
-      btn.textContent = reverseOrder ? '↑ Newest First' : '↓ Oldest First';
-      renderUtterances(utteranceData);
-    });
-
     // Launch Overlay — opens config page in new tab pre-seeded with session ID
     document.getElementById('launch-overlay-btn').addEventListener('click', () => {
       const configUrl = `overlay-config.html?session=${sid}`;
@@ -813,15 +797,16 @@
       .reduce((sum, [, v]) => sum + (v || 0), 0);
   }
 
-  let reverseOrder = false;
-
   function renderUtterances(data) {
     const container = document.getElementById('utterance-list');
     const empty = document.getElementById('empty-state');
     const items = Object.values(data).sort((a, b) => {
       const ta = a.first_seen_at ? (a.first_seen_at.toMillis ? a.first_seen_at.toMillis() : a.first_seen_at) : 0;
       const tb = b.first_seen_at ? (b.first_seen_at.toMillis ? b.first_seen_at.toMillis() : b.first_seen_at) : 0;
-      return reverseOrder ? tb - ta : ta - tb;
+      return ta - tb;
+    });
+
+    if (items.length === 0) { if (empty) empty.style.display = 'block'; return; }
     if (empty) empty.style.display = 'none';
 
     // Find max reactions for highlighting top reacted
@@ -839,11 +824,9 @@
       const chips = reactionFields.map(([k, v]) => {
         const emoji = EMOJI_KEY_MAP[k] || String.fromCodePoint(parseInt(k.replace('reaction_','')));
         const count = v || 0;
-        const cls = count > 0 ? 'reaction-chip has-reactions' : 'reaction-chip';
-        return '<div class="' + cls + '"><span>' + emoji + '</span><span class="count">' + count + '</span></div>';
+        return `<div class="reaction-chip ${count > 0 ? 'has-reactions' : ''}"><span>${emoji}</span><span class="count">${count}</span></div>`;
       }).join('');
 
-      const totalChip = total > 0 ? '<div class="reaction-chip" style="margin-left:auto;background:#f0f0f0;"><span style="font-size:0.8em;color:#888;">total</span><span class="count">' + total + '</span></div>' : '';
       card.innerHTML = `
         <div class="meta">
           <span class="utter-num">#${idx + 1}</span>
@@ -852,7 +835,7 @@
         <div class="utter-text">${u.text || '(no text)'}</div>
         <div class="reaction-counts">
           ${chips}
-          ${totalChip}
+          ${total > 0 ? `<div class="reaction-chip" style="margin-left:auto;background:#f0f0f0;"><span style="font-size:0.8em;color:#888;">total</span><span class="count">${total}</span></div>` : ''}
         </div>`;
       container.appendChild(card);
     });
