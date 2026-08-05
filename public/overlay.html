@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wordly Reaction Overlay</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      /* Background set by JS from URL params */
+    }
+
+    #bg-iframe {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: none;
+    }
+
+    #bg-iframe.visible { display: block; }
+
+    #overlay-container {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .floating-emoji {
+      position: absolute;
+      bottom: -120px;
+      pointer-events: none;
+      user-select: none;
+      line-height: 1;
+      will-change: transform, opacity;
+      filter: drop-shadow(0 4px 12px rgba(0,0,0,0.4));
+      animation: floatUp var(--duration) var(--easing) forwards;
+    }
+
+    @keyframes floatUp {
+      0%   { bottom: -10%; opacity: 0; transform: translateX(0) scale(0.5) rotate(var(--rot-start)); }
+      8%   { opacity: 1; transform: translateX(calc(var(--drift1) * 0.3)) scale(1.1) rotate(var(--rot-start)); }
+      15%  { transform: translateX(calc(var(--drift1) * 0.6)) scale(1) rotate(0deg); }
+      35%  { transform: translateX(var(--drift1)) scale(1) rotate(calc(var(--rot-end) * 0.4)); }
+      55%  { transform: translateX(calc(var(--drift1) + var(--drift2))) scale(1) rotate(calc(var(--rot-end) * 0.7)); }
+      75%  { transform: translateX(calc(var(--drift1) + var(--drift2) + var(--drift3))) scale(1) rotate(var(--rot-end)); }
+      88%  { opacity: 1; }
+      100% { bottom: 110%; opacity: 0; transform: translateX(calc(var(--drift1) + var(--drift2) + var(--drift3) + var(--drift4))) scale(0.85) rotate(var(--rot-end)); }
+    }
+
+    /* Error / status overlay for debugging */
+    #status-msg {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.7);
+      color: white;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-family: monospace;
+      font-size: 13px;
+      display: none;
+      z-index: 9999;
+    }
+  </style>
+</head>
+<body>
+  <iframe id="bg-iframe" allowfullscreen></iframe>
+  <div id="overlay-container"></div>
+  <div id="status-msg" id="status-msg"></div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getFirestore, collection, onSnapshot, doc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBwHUWl1Ip9OAXhyKELXlk5EghuuRZ6TNo",
+      authDomain: "wordly-reaction-engine.firebaseapp.com",
+      projectId: "wordly-reaction-engine",
+      storageBucket: "wordly-reaction-engine.appspot.com",
+      messagingSenderId: "508681104777",
+      appId: "1:508681104777:web:9852c0682f8bc03a010558"
+    };
+
+    // --- Parse config from URL params ---
+    const params = new URLSearchParams(window.location.search);
+    const sessionId  = params.get('session') || '';
+    const bgType     = params.get('bg') || 'chroma';
+    const bgColor    = params.get('bgColor') || '#00B140';
+    const emojiSize  = parseInt(params.get('size') || '72');
+    const speedLevel = parseInt(params.get('speed') || '3');
+    const driftLevel = parseInt(params.get('drift') || '3');
+    const zone       = params.get('zone') || 'both';
+    const iframeUrl  = params.get('iframeUrl') || '';
+
+    // Apply background — iframe takes priority, otherwise solid color
+    if (iframeUrl) {
+      const iframe = document.getElementById('bg-iframe');
+      iframe.src = iframeUrl;
+      iframe.classList.add('visible');
+      document.body.style.background = 'transparent';
+    } else {
+      document.body.style.background = bgColor;
+    }
+
+    // Speed: duration in ms — slower number = faster float
+    const SPEED_MS = { 1: 12000, 2: 9000, 3: 6500, 4: 4500, 5: 3000 };
+    const DRIFT_PX = { 1: 18, 2: 35, 3: 60, 4: 95, 5: 140 };
+    const baseDuration = SPEED_MS[speedLevel] || 6500;
+    const maxDrift = DRIFT_PX[driftLevel] || 60;
+
+    const container = document.getElementById('overlay-container');
+
+    // Zone helpers
+    function getSpawnX() {
+      const W = window.innerWidth;
+      const emojiW = emojiSize;
+
+      if (zone === 'left') {
+        return Math.random() * (W * 0.3 - emojiW);
+      } else if (zone === 'right') {
+        return W * 0.7 + Math.random() * (W * 0.3 - emojiW);
+      } else if (zone === 'both') {
+        if (Math.random() < 0.5) {
+          return Math.random() * (W * 0.3 - emojiW);
+        } else {
+          return W * 0.7 + Math.random() * (W * 0.3 - emojiW);
+        }
+      } else { // full
+        return Math.random() * (W - emojiW);
+      }
+    }
+
+    function spawnEmoji(emoji) {
+      const el = document.createElement('div');
+      el.className = 'floating-emoji';
+      el.textContent = emoji;
+      el.style.fontSize = emojiSize + 'px';
+
+      // Random spawn X
+      const x = getSpawnX();
+      el.style.left = x + 'px';
+
+      // Duration with slight jitter per emoji
+      const dur = baseDuration * (0.85 + Math.random() * 0.3);
+      el.style.setProperty('--duration', dur + 'ms');
+      el.style.setProperty('--easing', 'cubic-bezier(0.2, 0.6, 0.8, 1)');
+
+      // Drift values — multi-segment wandering path
+      const sign = () => (Math.random() < 0.5 ? 1 : -1);
+      const drift = () => sign() * (maxDrift * (0.3 + Math.random() * 0.7));
+      el.style.setProperty('--drift1', drift() + 'px');
+      el.style.setProperty('--drift2', drift() + 'px');
+      el.style.setProperty('--drift3', drift() + 'px');
+      el.style.setProperty('--drift4', drift() + 'px');
+
+      // Slight rotation
+      const rotStart = (Math.random() - 0.5) * 20;
+      const rotEnd   = (Math.random() - 0.5) * 30;
+      el.style.setProperty('--rot-start', rotStart + 'deg');
+      el.style.setProperty('--rot-end', rotEnd + 'deg');
+
+      container.appendChild(el);
+
+      // Remove after animation completes
+      setTimeout(() => el.remove(), dur + 200);
+    }
+
+    // --- Firestore listener ---
+    if (!sessionId) {
+      document.body.innerHTML = '<div style="color:white;font-family:monospace;padding:40px;font-size:18px;">No session ID. Launch from the organizer console.</div>';
+    } else {
+      const app = initializeApp(firebaseConfig);
+      const db  = getFirestore(app);
+
+      // Listen to user_reactions subcollection for new reactions
+      // We watch utterances for reaction count changes and diff them
+      let knownCounts = {}; // utteranceId -> { thumbs_up: N, ... }
+
+      const EMOJI_MAP = {
+        reaction_thumbs_up:   '👍',
+        reaction_thumbs_down: '👎',
+        reaction_heart:       '❤️',
+        reaction_thinking:    '🤔',
+        reaction_question:    '❓',
+      };
+
+      const utterancesRef = collection(db, 'sessions', sessionId, 'utterances');
+
+      onSnapshot(utterancesRef, (snap) => {
+        snap.docChanges().forEach(change => {
+          if (change.type === 'removed') return;
+          const id   = change.doc.id;
+          const data = change.doc.data();
+          const prev = knownCounts[id] || {};
+
+          Object.entries(EMOJI_MAP).forEach(([field, emoji]) => {
+            const newCount  = data[field] || 0;
+            const prevCount = prev[field] || 0;
+            const delta     = newCount - prevCount;
+            // Spawn one emoji per new reaction (cap at 5 to avoid bursts on first load)
+            for (let i = 0; i < Math.min(delta, 5); i++) {
+              // Slight stagger if multiple reactions came in at once
+              setTimeout(() => spawnEmoji(emoji), i * 180);
+            }
+          });
+
+          // Update known counts
+          knownCounts[id] = {};
+          Object.keys(EMOJI_MAP).forEach(f => knownCounts[id][f] = data[f] || 0);
+        });
+      });
+    }
+  </script>
+</body>
+</html>
