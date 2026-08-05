@@ -362,6 +362,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function buildReactionDialog(emojis) {
     if (!reactionDialog) return;
+    // Don't rebuild while dialog is open — would kill active click targets
+    if (reactionDialog.style.display === 'flex') {
+      // Queue a rebuild for after it closes
+      reactionDialog.dataset.pendingEmojis = JSON.stringify(emojis);
+      return;
+    }
     reactionDialog.innerHTML = '';
     emojis.forEach(emoji => {
       const btn = document.createElement('button');
@@ -370,6 +376,7 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.addEventListener('click', () => handleReactionClick(emoji));
       reactionDialog.appendChild(btn);
     });
+    delete reactionDialog.dataset.pendingEmojis;
   }
 
   function setupReactionListeners() {
@@ -411,6 +418,11 @@ document.addEventListener('DOMContentLoaded', () => {
     reactionDialog.style.display = 'none';
     dialogOverlay.style.display = 'none';
     activeUtteranceData = null;
+    // Apply any pending emoji rebuild that was deferred while dialog was open
+    if (reactionDialog.dataset.pendingEmojis) {
+      const emojis = JSON.parse(reactionDialog.dataset.pendingEmojis);
+      buildReactionDialog(emojis);
+    }
   }
 
   function handleReactionClick(reactionType) {
