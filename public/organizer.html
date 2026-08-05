@@ -388,6 +388,8 @@
   const db = getFirestore(app);
   const functions = getFunctions(app);
 
+  let reverseOrder = false;
+
   // --- SESSION GATE ---
   const gate = document.getElementById('session-gate');
   const gateInput = document.getElementById('session-input');
@@ -687,7 +689,6 @@
 
     // CSV Export
     document.getElementById('export-csv-btn').addEventListener('click', () => exportCSV(utteranceData, sid));
-    let reverseOrder = false;
     document.getElementById('reverse-order-btn').addEventListener('click', () => {
       reverseOrder = !reverseOrder;
       document.getElementById('reverse-order-btn').textContent = reverseOrder ? '↑ Newest First' : '↓ Oldest First';
