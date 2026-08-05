@@ -839,7 +839,8 @@
       const chips = reactionFields.map(([k, v]) => {
         const emoji = EMOJI_KEY_MAP[k] || String.fromCodePoint(parseInt(k.replace('reaction_','')));
         const count = v || 0;
-        return `<div class="reaction-chip ${count > 0 ? 'has-reactions' : ''}"><span>${emoji}</span><span class="count">${count}</span></div>`;
+        const cls = count > 0 ? 'reaction-chip has-reactions' : 'reaction-chip';
+        return '<div class="' + cls + '"><span>' + emoji + '</span><span class="count">' + count + '</span></div>';
       }).join('');
 
       const totalChip = total > 0 ? '<div class="reaction-chip" style="margin-left:auto;background:#f0f0f0;"><span style="font-size:0.8em;color:#888;">total</span><span class="count">' + total + '</span></div>' : '';
