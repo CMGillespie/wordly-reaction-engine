@@ -842,6 +842,7 @@
         return `<div class="reaction-chip ${count > 0 ? 'has-reactions' : ''}"><span>${emoji}</span><span class="count">${count}</span></div>`;
       }).join('');
 
+      const totalChip = total > 0 ? '<div class="reaction-chip" style="margin-left:auto;background:#f0f0f0;"><span style="font-size:0.8em;color:#888;">total</span><span class="count">' + total + '</span></div>' : '';
       card.innerHTML = `
         <div class="meta">
           <span class="utter-num">#${idx + 1}</span>
@@ -850,7 +851,7 @@
         <div class="utter-text">${u.text || '(no text)'}</div>
         <div class="reaction-counts">
           ${chips}
-          ${total > 0 ? `<div class="reaction-chip" style="margin-left:auto;background:#f0f0f0;"><span style="font-size:0.8em;color:#888;">total</span><span class="count">${total}</span></div>` : ''}
+          ${totalChip}
         </div>`;
       container.appendChild(card);
     });
