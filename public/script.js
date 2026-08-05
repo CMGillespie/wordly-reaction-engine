@@ -370,28 +370,35 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.addEventListener('click', () => handleReactionClick(emoji));
       reactionDialog.appendChild(btn);
     });
-    if (dialogOverlay) dialogOverlay.addEventListener('click', hideReactionDialog);
   }
 
   function setupReactionListeners() {
     buildReactionDialog(activeEmojis);
+    // Overlay dismiss — only add once here, not inside buildReactionDialog
+    if (dialogOverlay) {
+      dialogOverlay.addEventListener('click', hideReactionDialog);
+    }
   }
 
   // Watch session doc for emoji config changes
   function setupEmojiListener() {
-    if (!window.appDb || !window.firestore || !window.firestore.doc || !state.sessionId) return;
-    const sessionRef = window.firestore.doc(window.appDb, 'sessions', state.sessionId);
-    window.firestore.onSnapshot(sessionRef, (snap) => {
-      if (!snap.exists()) return;
-      const data = snap.data();
-      const emojis = Array.isArray(data.reaction_emojis) && data.reaction_emojis.length > 0
-        ? data.reaction_emojis
-        : DEFAULT_EMOJIS;
-      if (JSON.stringify(emojis) !== JSON.stringify(activeEmojis)) {
-        activeEmojis = emojis;
-        buildReactionDialog(activeEmojis);
+    const waitForFirebase = setInterval(() => {
+      if (window.appDb && window.firestore && window.firestore.doc && state.sessionId) {
+        clearInterval(waitForFirebase);
+        const sessionRef = window.firestore.doc(window.appDb, 'sessions', state.sessionId);
+        window.firestore.onSnapshot(sessionRef, (snap) => {
+          if (!snap.exists()) return;
+          const data = snap.data();
+          const emojis = Array.isArray(data.reaction_emojis) && data.reaction_emojis.length > 0
+            ? data.reaction_emojis
+            : DEFAULT_EMOJIS;
+          // Always apply — don't guard on equality so initial load always sets correctly
+          activeEmojis = emojis;
+          buildReactionDialog(activeEmojis);
+        });
       }
-    });
+    }, 200);
+    setTimeout(() => clearInterval(waitForFirebase), 10000);
   }
 
   function showReactionDialog(utteranceData) {
