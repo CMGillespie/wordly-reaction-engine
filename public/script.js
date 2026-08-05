@@ -44,6 +44,9 @@ document.addEventListener('DOMContentLoaded', () => {
   let messageListenerUnsubscribe = null;
   // v21: track last speaker for >> change indicator
   let lastSpeakerId = null;
+  // Emoji set — default, overridden by session config
+  const DEFAULT_EMOJIS = ['👍', '👎', '❤️', '🤔', '❓'];
+  let activeEmojis = [...DEFAULT_EMOJIS];
   let lastSpeakerTag = null;
   // v24: live reaction listeners
   let showLiveReactions = false;
@@ -355,10 +358,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     return id;
   }
-
-  // Default emoji set — overridden by session config if set
-  const DEFAULT_EMOJIS = ['👍', '👎', '❤️', '🤔', '❓'];
-  let activeEmojis = [...DEFAULT_EMOJIS];
 
   function buildReactionDialog(emojis) {
     if (!reactionDialog) return;
