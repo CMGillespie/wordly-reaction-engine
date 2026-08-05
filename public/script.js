@@ -161,6 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupMediaSession();
     setupMessageListener();
     setupLiveReactionsListener();
+    setupEmojiListener();
     resetHeaderCollapseTimer();
     connectWebSocket();
   }
@@ -355,14 +356,42 @@ document.addEventListener('DOMContentLoaded', () => {
     return id;
   }
 
+  // Default emoji set — overridden by session config if set
+  const DEFAULT_EMOJIS = ['👍', '👎', '❤️', '🤔', '❓'];
+  let activeEmojis = [...DEFAULT_EMOJIS];
+
+  function buildReactionDialog(emojis) {
+    if (!reactionDialog) return;
+    reactionDialog.innerHTML = '';
+    emojis.forEach(emoji => {
+      const btn = document.createElement('button');
+      btn.textContent = emoji;
+      btn.dataset.emoji = emoji;
+      btn.addEventListener('click', () => handleReactionClick(emoji));
+      reactionDialog.appendChild(btn);
+    });
+    if (dialogOverlay) dialogOverlay.addEventListener('click', hideReactionDialog);
+  }
+
   function setupReactionListeners() {
-    if (!reactionDialog || !dialogOverlay) return;
-    reactionDialog.querySelector('#react-thumbs-up').addEventListener('click',   () => handleReactionClick('👍'));
-    reactionDialog.querySelector('#react-thumbs-down').addEventListener('click', () => handleReactionClick('👎'));
-    reactionDialog.querySelector('#react-heart').addEventListener('click',       () => handleReactionClick('❤️'));
-    reactionDialog.querySelector('#react-thinking').addEventListener('click',    () => handleReactionClick('🤔'));
-    reactionDialog.querySelector('#react-question').addEventListener('click',    () => handleReactionClick('❓'));
-    dialogOverlay.addEventListener('click', hideReactionDialog);
+    buildReactionDialog(activeEmojis);
+  }
+
+  // Watch session doc for emoji config changes
+  function setupEmojiListener() {
+    if (!window.appDb || !window.firestore || !window.firestore.doc || !state.sessionId) return;
+    const sessionRef = window.firestore.doc(window.appDb, 'sessions', state.sessionId);
+    window.firestore.onSnapshot(sessionRef, (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      const emojis = Array.isArray(data.reaction_emojis) && data.reaction_emojis.length > 0
+        ? data.reaction_emojis
+        : DEFAULT_EMOJIS;
+      if (JSON.stringify(emojis) !== JSON.stringify(activeEmojis)) {
+        activeEmojis = emojis;
+        buildReactionDialog(activeEmojis);
+      }
+    });
   }
 
   function showReactionDialog(utteranceData) {
@@ -530,13 +559,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const myReactionsForThis = state.myReactions[phraseId] || new Set();
     const hint = phraseEl.querySelector('.reaction-hint');
 
-    const EMOJIS = [
-      { key: 'reaction_thumbs_up',   emoji: '👍' },
-      { key: 'reaction_thumbs_down', emoji: '👎' },
-      { key: 'reaction_heart',       emoji: '❤️' },
-      { key: 'reaction_thinking',    emoji: '🤔' },
-      { key: 'reaction_question',    emoji: '❓' },
-    ];
+    // Map each active emoji to its Firestore field key
+    const EMOJI_KEY_MAP = {
+      '👍': 'reaction_thumbs_up',
+      '👎': 'reaction_thumbs_down',
+      '❤️': 'reaction_heart',
+      '🤔': 'reaction_thinking',
+      '❓': 'reaction_question',
+    };
+    const EMOJIS = activeEmojis.map(emoji => ({
+      key: EMOJI_KEY_MAP[emoji] || `reaction_${emoji.codePointAt(0)}`,
+      emoji
+    }));
 
     const hasAnyReactions = EMOJIS.some(e => (data[e.key] || 0) > 0);
 

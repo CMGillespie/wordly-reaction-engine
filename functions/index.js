@@ -86,6 +86,13 @@ exports.addReaction = onRequest(async (request, response) => {
       ? sessionRef.collection('user_reactions').doc(dedupeId)
       : null;
 
+    // Map emoji to Firestore field — named keys for default 5, codepoint key for custom
+    function emojiToField(emoji) {
+      const named = { '👍':'reaction_thumbs_up','👎':'reaction_thumbs_down','❤️':'reaction_heart','🤔':'reaction_thinking','❓':'reaction_question' };
+      return named[emoji] || `reaction_${emoji.codePointAt(0)}`;
+    }
+    const reactionField = emojiToField(reaction_type);
+
     await db.runTransaction(async (transaction) => {
       const utteranceSnap = await transaction.get(utteranceRef);
       const participantSnap = anonymous_id ? await transaction.get(participantRef) : null;
@@ -93,29 +100,24 @@ exports.addReaction = onRequest(async (request, response) => {
       // Dedup check
       if (userReactionRef) {
         const existingReaction = await transaction.get(userReactionRef);
-        if (existingReaction.exists) return; // Already counted
+        if (existingReaction.exists) return;
       }
 
       // Utterance document
       if (!utteranceSnap.exists) {
         if (!text || !language) throw new Error('New utterance missing text/language.');
-        transaction.set(utteranceRef, {
+        const initData = {
           text, language,
           first_seen_at: FieldValue.serverTimestamp(),
           last_reacted_at: FieldValue.serverTimestamp(),
-          reaction_thumbs_up:   reaction_type === '👍' ? 1 : 0,
-          reaction_thumbs_down: reaction_type === '👎' ? 1 : 0,
-          reaction_heart:       reaction_type === '❤️' ? 1 : 0,
-          reaction_thinking:    reaction_type === '🤔' ? 1 : 0,
-          reaction_question:    reaction_type === '❓' ? 1 : 0,
-        });
+          [reactionField]: 1,
+        };
+        transaction.set(utteranceRef, initData);
       } else {
-        const updateData = { last_reacted_at: FieldValue.serverTimestamp() };
-        if (reaction_type === '👍') updateData.reaction_thumbs_up   = FieldValue.increment(1);
-        if (reaction_type === '👎') updateData.reaction_thumbs_down = FieldValue.increment(1);
-        if (reaction_type === '❤️') updateData.reaction_heart       = FieldValue.increment(1);
-        if (reaction_type === '🤔') updateData.reaction_thinking    = FieldValue.increment(1);
-        if (reaction_type === '❓') updateData.reaction_question    = FieldValue.increment(1);
+        const updateData = {
+          last_reacted_at: FieldValue.serverTimestamp(),
+          [reactionField]: FieldValue.increment(1)
+        };
         transaction.update(utteranceRef, updateData);
       }
 
