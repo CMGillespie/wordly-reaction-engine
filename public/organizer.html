@@ -792,8 +792,9 @@
   }
 
   function totalReactions(u) {
-    return (u.reaction_thumbs_up || 0) + (u.reaction_thumbs_down || 0) +
-           (u.reaction_heart || 0) + (u.reaction_thinking || 0) + (u.reaction_question || 0);
+    return Object.entries(u)
+      .filter(([k]) => k.startsWith('reaction_') && k !== 'reaction_emojis')
+      .reduce((sum, [, v]) => sum + (v || 0), 0);
   }
 
   function renderUtterances(data) {
@@ -816,11 +817,16 @@
       const total = totalReactions(u);
       const card = document.createElement('div');
       card.className = 'utterance-card' + (total >= maxReactions * 0.8 && total > 0 ? ' top-reacted' : '');
-      const tu = u.reaction_thumbs_up || 0;
-      const td = u.reaction_thumbs_down || 0;
-      const th = u.reaction_heart || 0;
-      const tt = u.reaction_thinking || 0;
-      const tq = u.reaction_question || 0;
+
+      // Build chips dynamically from all reaction_ fields present on this utterance
+      const EMOJI_KEY_MAP = {'reaction_thumbs_up':'👍','reaction_thumbs_down':'👎','reaction_heart':'❤️','reaction_thinking':'🤔','reaction_question':'❓'};
+      const reactionFields = Object.entries(u).filter(([k]) => k.startsWith('reaction_') && k !== 'reaction_emojis');
+      const chips = reactionFields.map(([k, v]) => {
+        const emoji = EMOJI_KEY_MAP[k] || String.fromCodePoint(parseInt(k.replace('reaction_','')));
+        const count = v || 0;
+        return `<div class="reaction-chip ${count > 0 ? 'has-reactions' : ''}"><span>${emoji}</span><span class="count">${count}</span></div>`;
+      }).join('');
+
       card.innerHTML = `
         <div class="meta">
           <span class="utter-num">#${idx + 1}</span>
@@ -828,11 +834,7 @@
         </div>
         <div class="utter-text">${u.text || '(no text)'}</div>
         <div class="reaction-counts">
-          <div class="reaction-chip ${tu > 0 ? 'has-reactions' : ''}"><span>👍</span><span class="count">${tu}</span></div>
-          <div class="reaction-chip ${td > 0 ? 'has-reactions' : ''}"><span>👎</span><span class="count">${td}</span></div>
-          <div class="reaction-chip ${th > 0 ? 'has-reactions' : ''}"><span>❤️</span><span class="count">${th}</span></div>
-          <div class="reaction-chip ${tt > 0 ? 'has-reactions' : ''}"><span>🤔</span><span class="count">${tt}</span></div>
-          <div class="reaction-chip ${tq > 0 ? 'has-reactions' : ''}"><span>❓</span><span class="count">${tq}</span></div>
+          ${chips}
           ${total > 0 ? `<div class="reaction-chip" style="margin-left:auto;background:#f0f0f0;"><span style="font-size:0.8em;color:#888;">total</span><span class="count">${total}</span></div>` : ''}
         </div>`;
       container.appendChild(card);
@@ -842,15 +844,15 @@
   // --- SUMMARY STATS ---
   function updateSummary(data) {
     const items = Object.values(data);
-    let tu = 0, td = 0, th = 0, tt = 0, tq = 0;
+    let tu = 0, td = 0, th = 0, tt = 0, tq = 0, total = 0;
     items.forEach(u => {
       tu += u.reaction_thumbs_up || 0;
       td += u.reaction_thumbs_down || 0;
       th += u.reaction_heart || 0;
       tt += u.reaction_thinking || 0;
       tq += u.reaction_question || 0;
+      total += totalReactions(u);
     });
-    const total = tu + td + th + tt + tq;
     document.getElementById('stat-total').textContent = total;
     document.getElementById('stat-thumbsup').textContent = tu;
     document.getElementById('stat-thumbsdown').textContent = td;
